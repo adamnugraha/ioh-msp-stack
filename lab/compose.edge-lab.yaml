@@ -1,0 +1,13 @@
+# Lab only: run the customer's edge collector on the platform network, under the address
+# registered for the proxy. In production the collector runs at the customer site and only
+# needs outbound TCP 10051 to the Zabbix server.
+services:
+  zabbix-proxy:
+    networks:
+      default:
+        aliases: [lab-bankx-proxy]
+
+networks:
+  default:
+    name: msp
+    external: true

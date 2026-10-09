@@ -1,0 +1,39 @@
+# Semaphore UI (Community edition): runs Ansible playbooks and OpenTofu plans.
+# One Semaphore project per customer is created by msp-glue.
+services:
+  semaphore:
+    image: ${SEMAPHORE_IMAGE}
+    restart: unless-stopped
+    environment:
+      SEMAPHORE_DB_DIALECT: postgres
+      SEMAPHORE_DB_HOST: postgres
+      SEMAPHORE_DB_NAME: semaphore
+      SEMAPHORE_DB: semaphore
+      SEMAPHORE_DB_USER: semaphore
+      SEMAPHORE_DB_PASS: ${SEMAPHORE_DB_PASSWORD}
+      SEMAPHORE_DB_OPTIONS: '{"sslmode":"disable"}'
+      SEMAPHORE_ADMIN: admin
+      SEMAPHORE_ADMIN_NAME: Platform Admin
+      SEMAPHORE_ADMIN_EMAIL: noc@example.internal
+      SEMAPHORE_ADMIN_PASSWORD: ${SEMAPHORE_ADMIN_PASSWORD}
+      SEMAPHORE_ACCESS_KEY_ENCRYPTION: ${SEMAPHORE_ACCESS_KEY_ENCRYPTION}
+      SEMAPHORE_COOKIE_HASH: ${SEMAPHORE_COOKIE_HASH}
+      SEMAPHORE_COOKIE_ENCRYPTION: ${SEMAPHORE_COOKIE_ENCRYPTION}
+      SEMAPHORE_MAX_PARALLEL_TASKS: "4"
+      SEMAPHORE_MAX_TASK_DURATION_SEC: "3600"
+      TZ: ${TZ}
+    volumes:
+      - semaphore_data:/var/lib/semaphore
+      - semaphore_tmp:/tmp/semaphore
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks: [msp]
+
+volumes:
+  semaphore_data:
+  semaphore_tmp:
+
+networks:
+  msp:
+    external: true
+    name: msp

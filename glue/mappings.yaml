@@ -1,0 +1,148 @@
+# =============================================================================
+# msp-glue mapping rules: how Nautobot data becomes monitoring, assets and tickets.
+# Edit this file, restart msp-glue (docker compose restart msp-glue), then apply it to existing
+# customers with "mspctl tenant sync --all" and "mspctl device sync".
+# Template names must match Zabbix exactly (Data collection > Templates).
+# =============================================================================
+
+tenancy:
+  # Only Nautobot tenants in this tenant group are treated as managed customers.
+  tenant_group: "Managed Services Customers"
+  # Short code used in names everywhere (Zabbix groups, Semaphore project, Git repository).
+  # Taken from the tenant custom field "msp_code" (for example "acme").
+
+zabbix:
+  customer_group_root: "Customers"                # host groups: Customers/<Tenant>/<Role>
+  noc_usergroup: "MSP NOC engineers"              # read-write on every customer host group
+  service_usergroup: "MSP service accounts"       # read on every customer group (ticketing webhook user)
+  customer_readonly_suffix: "read-only"           # one read-only user group per customer
+  macro_template_group: "MSP/Customer settings"   # holds one macro template per customer
+  default_proxy_group: "pg-central"               # used when the customer has no dedicated proxy group
+  # Nautobot device status -> Zabbix host status (0 = monitored, 1 = not monitored).
+  # Devices with any other status are not pushed to Zabbix.
+  status:
+    Active: 0
+    Offline: 1
+    Decommissioning: 1
+  # Chosen by the Nautobot platform's network driver. "interface" is snmp or agent.
+  platforms:
+    cisco_ios:         {interface: snmp,  templates: ["Cisco IOS by SNMP"]}
+    cisco_xe:          {interface: snmp,  templates: ["Cisco IOS by SNMP"]}
+    cisco_nxos:        {interface: snmp,  templates: ["Cisco Nexus 9000 Series by SNMP"]}
+    cisco_asa:         {interface: snmp,  templates: ["Cisco ASAv by SNMP"]}
+    arista_eos:        {interface: snmp,  templates: ["Arista by SNMP"]}
+    juniper_junos:     {interface: snmp,  templates: ["Juniper by SNMP"]}
+    fortinet:          {interface: snmp,  templates: ["FortiGate by SNMP"]}
+    paloalto_panos:    {interface: snmp,  templates: ["Network Generic Device by SNMP"]}
+    checkpoint_gaia:   {interface: snmp,  templates: ["Check Point Next Generation Firewall by SNMP"]}
+    mikrotik_routeros: {interface: snmp,  templates: ["Mikrotik by SNMP"]}
+    huawei_vrp:        {interface: snmp,  templates: ["Huawei VRP by SNMP"]}
+    huawei_vrpv8:      {interface: snmp,  templates: ["Huawei VRP by SNMP"]}
+    hp_comware:        {interface: snmp,  templates: ["HP Comware HH3C by SNMP"]}
+    hp_procurve:       {interface: snmp,  templates: ["HP Enterprise Switch by SNMP"]}
+    aruba_aoscx:       {interface: snmp,  templates: ["Aruba CX 8300s by SNMP"]}
+    tplink_jetstream:  {interface: snmp,  templates: ["TP-LINK by SNMP"]}
+    linux:             {interface: agent, templates: ["Linux by Zabbix agent", "ICMP Ping"]}
+    windows:           {interface: agent, templates: ["Windows by Zabbix agent", "ICMP Ping"]}
+  default_platform:    {interface: snmp,  templates: ["Network Generic Device by SNMP"]}
+  # Added to every managed host, whatever the platform. Keep this short: the SNMP device
+  # templates already contain ICMP checks, so "ICMP Ping" is listed per platform above
+  # (agent-based only); linking it twice makes Zabbix reject the host.
+  always_templates: []
+  # Monthly availability per customer (Services > SLA report in Zabbix). Downtime counts only while a
+  # problem tagged scope=availability (for example "Unavailable by ICMP ping") of at least this
+  # severity is open on one of the customer's hosts. 4 = High, 5 = Disaster.
+  sla:
+    severity: 4
+    slo: {gold: "99.9", silver: "99.5", bronze: "99.0"}
+  # SNMP settings written on every SNMP interface. The values are macros resolved
+  # from the customer's macro template, so secrets never sit on individual hosts.
+  snmp:
+    version: 2            # 2 or 3; per-customer override with the tenant custom field msp_snmp_version
+    community_macro: "{$SNMP_COMMUNITY}"
+    v3:
+      securityname: "{$SNMPV3_USER}"
+      securitylevel: 2    # authPriv
+      authprotocol: 1     # 0 MD5, 1 SHA1, 2 SHA224, 3 SHA256, 4 SHA384, 5 SHA512
+      privprotocol: 1     # 0 DES, 1 AES128, 2 AES192, 3 AES256
+      authpassphrase: "{$SNMPV3_AUTHPASS}"
+      privpassphrase: "{$SNMPV3_PRIVPASS}"
+
+glpi:
+  # Parent entity of every customer entity. Created under the GLPI root entity.
+  msp_entity: "IOH Managed Services"
+  # Nautobot device role -> GLPI asset type. Anything not listed uses default_itemtype.
+  itemtype_by_role:
+    server: Computer
+    hypervisor: Computer
+    virtual-machine: Computer
+  default_itemtype: NetworkEquipment
+  # Nautobot device status -> GLPI asset status (created if missing).
+  state_by_status:
+    Active: "In production"
+    Planned: "Planned"
+    Staged: "Staged"
+    Offline: "Out of order"
+    Decommissioning: "Decommissioning"
+    Inventory: "In stock"
+  # Ticket defaults for alerts coming from Zabbix and drift found by Golden Config.
+  monitoring_request_type: "Monitoring"
+  noc_group: "NOC Level 1"
+  categories:
+    monitoring: "Managed infrastructure > Monitoring alert"
+    compliance: "Managed infrastructure > Configuration drift"
+    change: "Managed infrastructure > Standard change"
+  # Service tiers: one service level agreement pair (time to own, time to resolve) each.
+  # The customer's tier comes from the Nautobot tenant custom field msp_service_tier.
+  calendars:
+    "24x7": {days: [0, 1, 2, 3, 4, 5, 6], begin: "00:00:00", end: "24:00:00"}
+    "Business hours WIB": {days: [1, 2, 3, 4, 5], begin: "08:00:00", end: "17:00:00"}
+  service_tiers:
+    gold:   {calendar: "24x7",               own_minutes: 15,  resolve_hours: 4}
+    silver: {calendar: "24x7",               own_minutes: 30,  resolve_hours: 8}
+    bronze: {calendar: "Business hours WIB", own_minutes: 120, resolve_hours: 24}
+
+semaphore:
+  # Shared playbook repository (Forgejo organisation/repository).
+  playbook_repo: "msp/playbooks"
+  playbook_branch: "main"
+  # The Semaphore image ships the Ansible community package, which already contains the common
+  # network collections (ansible.netcommon, cisco.ios, cisco.nxos, arista.eos, junipernetworks.junos,
+  # community.routeros, fortinet.fortios). true = use those, no Internet needed at run time.
+  # false = install collections/requirements.yml from Ansible Galaxy before every run (needs Internet
+  # or an internal Galaxy mirror), for example to add community.network for Huawei.
+  skip_galaxy_install: true
+  # Created in every customer project. Names are referenced by automation rules below.
+  templates:
+    - name: "Collect diagnostics"
+      playbook: "playbooks/collect-diagnostics.yml"
+      description: "Read-only: gathers show commands or system facts and stores them in the task log."
+    - name: "Bounce interface"
+      playbook: "playbooks/bounce-interface.yml"
+      description: "Shuts and re-enables one interface. Needs an approved change."
+    - name: "Linux patching"
+      playbook: "playbooks/linux-patching.yml"
+      description: "Applies security updates to Linux servers. Needs an approved change."
+
+automation:
+  # When a GLPI change in one of these categories is approved, run the matching template
+  # in the customer's Semaphore project. Variables come from the change's description
+  # block "automation:" (see the guide) and are passed as Ansible extra variables.
+  change_templates:
+    "Managed infrastructure > Standard change > Bounce interface": "Bounce interface"
+    "Managed infrastructure > Standard change > Linux patching": "Linux patching"
+    "Managed infrastructure > Standard change > Collect diagnostics": "Collect diagnostics"
+
+golden_config:
+  # Nautobot platforms Golden Config backs up and checks. Each needs a template named after its
+  # network driver in the golden-config repository (templates/<network_driver>.j2).
+  platforms: ["Cisco IOS", "Cisco IOS-XE", "Cisco NX-OS", "Cisco ASA", "FortiOS", "Junos", "Arista EOS",
+              "RouterOS", "Huawei VRP", "AOS-CX", "Comware", "TP-Link JetStream"]
+  # Per-customer Golden Config settings point at a per-customer backup repository.
+  backup_repo_prefix: "backups-"
+  shared_intended_repo: "msp/intended-configs"
+  shared_templates_repo: "msp/golden-config"
+  backup_path_template: "{{obj.location.name|slugify}}/{{obj.name}}.cfg"
+  intended_path_template: "{{obj.tenant.name|slugify}}/{{obj.location.name|slugify}}/{{obj.name}}.cfg"
+  jinja_path_template: "templates/{{obj.platform.network_driver}}.j2"
+  sotagg_query_name: "MSP golden config data"

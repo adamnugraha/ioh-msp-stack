@@ -1,0 +1,32 @@
+# GLPI service desk, customer portal and asset register.
+# The image runs the web server and the GLPI scheduled tasks (needed for e-mail
+# collection, SLA escalation and webhooks) in one container.
+services:
+  glpi:
+    image: ${GLPI_IMAGE}
+    restart: unless-stopped
+    environment:
+      GLPI_DB_HOST: mariadb
+      GLPI_DB_PORT: "3306"
+      GLPI_DB_NAME: glpi
+      GLPI_DB_USER: glpi
+      GLPI_DB_PASSWORD: ${GLPI_DB_PASSWORD}
+      TZ: ${TZ}
+    volumes:
+      # Holds config, uploaded documents, plugins and logs. Back it up with the database.
+      - glpi_data:/var/glpi
+      # Do not bind-mount single files into /var/glpi/config: Docker would create that
+      # folder as root and GLPI (user www-data) could no longer write its configuration.
+      # To apply local_define.php, copy it into the running container instead:
+      #   docker compose cp components/glpi/local_define.php glpi:/var/glpi/config/
+    depends_on:
+      mariadb: {condition: service_healthy}
+    networks: [msp]
+
+volumes:
+  glpi_data:
+
+networks:
+  msp:
+    external: true
+    name: msp

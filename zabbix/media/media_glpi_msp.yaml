@@ -1,0 +1,319 @@
+zabbix_export:
+  version: '7.0'
+  media_types:
+  - name: GLPI MSP
+    type: WEBHOOK
+    parameters:
+    - name: alert_message
+      value: '{ALERT.MESSAGE}'
+    - name: alert_subject
+      value: '{ALERT.SUBJECT}'
+    - name: event_id
+      value: '{EVENT.ID}'
+    - name: event_name
+      value: '{EVENT.NAME}'
+    - name: event_nseverity
+      value: '{EVENT.NSEVERITY}'
+    - name: event_source
+      value: '{EVENT.SOURCE}'
+    - name: event_tags
+      value: '{EVENT.TAGSJSON}'
+    - name: event_update_status
+      value: '{EVENT.UPDATE.STATUS}'
+    - name: event_value
+      value: '{EVENT.VALUE}'
+    - name: glpi_app_token
+    - name: glpi_default_entity_id
+      value: '0'
+    - name: glpi_public_url
+    - name: glpi_requesttype_id
+    - name: glpi_ticket_id
+      value: '{EVENT.TAGS.__zbx_glpi_ticket_id}'
+    - name: glpi_url
+      value: <PLACE GLPI URL>
+    - name: glpi_user_token
+      value: <PLACE GLPI USER TOKEN>
+    - name: host_name
+      value: '{HOST.NAME}'
+    - name: trigger_id
+      value: '{TRIGGER.ID}'
+    - name: zabbix_url
+      value: '{$ZABBIX.URL}'
+    status: DISABLED
+    attempts: '3'
+    attempt_interval: 30s
+    timeout: 30s
+    script: |
+      // =============================================================================
+      // Zabbix webhook "GLPI MSP": opens, updates and solves GLPI incidents for
+      // multi-customer monitoring. Written for Zabbix 7.0+ (ES5, Duktape engine).
+      //
+      // What it adds compared with the stock GLPI webhook shipped with Zabbix:
+      //   - the ticket is created in the customer's GLPI entity (event tag glpi_entity_id)
+      //   - the affected asset is linked to the ticket (tags glpi_itemtype + glpi_asset_id)
+      //   - the ticket gets the "Monitoring" request type, so a GLPI rule routes it to the NOC
+      //   - a retry never creates a duplicate ticket (lookup by the [ZBX-<event id>] suffix)
+      //   - recovery adds a solution, so GLPI service level timers stop correctly
+      // The tags are written on every host by msp-glue from Nautobot data.
+      // =============================================================================
+
+      var SEVERITY_TO_URGENCY = {'0': 1, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5};
+
+      function isMacro(value) {
+          return typeof value === 'string' && /^\{[^}]+\}$/.test(value.trim());
+      }
+
+      function clean(value) {
+          if (value === undefined || value === null || isMacro(String(value))) {
+              return '';
+          }
+          return String(value).trim();
+      }
+
+      var Glpi = {
+          params: {},
+          sessionToken: null,
+
+          request: function (method, path, body) {
+              var req = new HttpRequest(),
+                  url = Glpi.params.glpi_url.replace(/\/+$/, '') + '/apirest.php/' + path,
+                  data = (body === undefined) ? undefined : JSON.stringify(body),
+                  response;
+
+              req.addHeader('Content-Type: application/json');
+              if (Glpi.params.glpi_app_token) {
+                  req.addHeader('App-Token: ' + Glpi.params.glpi_app_token);
+              }
+              if (Glpi.sessionToken) {
+                  req.addHeader('Session-Token: ' + Glpi.sessionToken);
+              }
+              else {
+                  req.addHeader('Authorization: user_token ' + Glpi.params.glpi_user_token);
+              }
+              if (Glpi.params.http_proxy) {
+                  req.setProxy(Glpi.params.http_proxy);
+              }
+
+              Zabbix.log(4, '[GLPI MSP] ' + method + ' ' + url + (data ? ' ' + data : ''));
+              if (method === 'GET') {
+                  response = req.get(url);
+              }
+              else if (method === 'POST') {
+                  response = req.post(url, data);
+              }
+              else if (method === 'PUT') {
+                  response = req.put(url, data);
+              }
+              else {
+                  response = req.customRequest(method, url, data);
+              }
+
+              var status = req.getStatus();
+              Zabbix.log(4, '[GLPI MSP] HTTP ' + status + ': ' + response);
+              if (status < 200 || status >= 300) {
+                  throw 'GLPI ' + method + ' ' + path + ' returned HTTP ' + status + ': ' + response;
+              }
+              if (!response) {
+                  return null;
+              }
+              try {
+                  return JSON.parse(response);
+              }
+              catch (error) {
+                  return response;
+              }
+          },
+
+          login: function () {
+              var result = Glpi.request('GET', 'initSession');
+              Glpi.sessionToken = result.session_token;
+              // Work from the root entity so every customer entity is reachable.
+              Glpi.request('POST', 'changeActiveEntities', {entities_id: 0, is_recursive: true});
+          },
+
+          logout: function () {
+              try {
+                  Glpi.request('GET', 'killSession');
+              }
+              catch (error) {
+                  Zabbix.log(4, '[GLPI MSP] killSession failed: ' + error);
+              }
+          },
+
+          findTicketByEvent: function (eventId) {
+              var marker = '[ZBX-' + eventId + ']',
+                  items = Glpi.request('GET', 'Ticket?range=0-5&searchText[name]=' + encodeURIComponent(marker)) || [];
+
+              for (var i = 0; i < items.length; i++) {
+                  if (items[i].name && items[i].name.indexOf(marker) !== -1) {
+                      return items[i];
+                  }
+              }
+              return null;
+          }
+      };
+
+      function tagMap(tagsJson) {
+          var map = {},
+              list;
+
+          try {
+              list = JSON.parse(tagsJson || '[]');
+          }
+          catch (error) {
+              list = [];
+          }
+          for (var i = 0; i < list.length; i++) {
+              map[list[i].tag] = list[i].value;
+          }
+          return map;
+      }
+
+      function ticketLink(id) {
+          var base = (Glpi.params.glpi_public_url || Glpi.params.glpi_url).replace(/\/+$/, '');
+          return base + '/front/ticket.form.php?id=' + id;
+      }
+
+      function openTicket(p, tags) {
+          var existing = Glpi.findTicketByEvent(p.event_id);
+          if (existing) {
+              Zabbix.log(3, '[GLPI MSP] ticket ' + existing.id + ' already exists for event ' + p.event_id);
+              return existing.id;
+          }
+
+          var entity = parseInt(clean(tags.glpi_entity_id) || clean(p.glpi_default_entity_id) || '0', 10),
+              customer = clean(tags.tenant_name) || clean(tags.tenant) || 'Unassigned',
+              device = clean(tags.device) || clean(p.host_name),
+              name = '[' + customer + '] ' + device + ': ' + clean(p.event_name),
+              suffix = ' [ZBX-' + p.event_id + ']',
+              eventUrl = clean(p.zabbix_url).replace(/\/+$/, '') + '/tr_events.php?triggerid=' + p.trigger_id +
+                  '&eventid=' + p.event_id,
+              input = {
+                  name: name.substring(0, 250 - suffix.length) + suffix,
+                  content: p.alert_message + '<p><a href="' + eventUrl + '">Open the event in Zabbix</a></p>',
+                  entities_id: entity,
+                  type: 1,
+                  urgency: SEVERITY_TO_URGENCY[p.event_nseverity] || 3,
+                  impact: parseInt(clean(tags.glpi_impact) || '3', 10)
+              };
+
+          if (clean(p.glpi_requesttype_id)) {
+              input.requesttypes_id = parseInt(p.glpi_requesttype_id, 10);
+          }
+
+          var created = Glpi.request('POST', 'Ticket', {input: input}),
+              ticketId = created.id;
+
+          var itemtype = clean(tags.glpi_itemtype),
+              assetId = clean(tags.glpi_asset_id);
+          if (itemtype && assetId) {
+              try {
+                  Glpi.request('POST', 'Item_Ticket', {input: {tickets_id: ticketId, itemtype: itemtype,
+                      items_id: parseInt(assetId, 10)}});
+              }
+              catch (error) {
+                  Zabbix.log(3, '[GLPI MSP] could not link asset ' + itemtype + '#' + assetId + ': ' + error);
+              }
+          }
+          return ticketId;
+      }
+
+      function addFollowup(ticketId, content) {
+          Glpi.request('POST', 'ITILFollowup', {input: {itemtype: 'Ticket', items_id: ticketId, content: content,
+              is_private: 0}});
+      }
+
+      function solveTicket(ticketId, content) {
+          var ticket = Glpi.request('GET', 'Ticket/' + ticketId);
+          if (!ticket || parseInt(ticket.status, 10) >= 5) {
+              addFollowup(ticketId, content);
+              return;
+          }
+          try {
+              Glpi.request('POST', 'ITILSolution', {input: {itemtype: 'Ticket', items_id: ticketId, content: content}});
+          }
+          catch (error) {
+              Zabbix.log(3, '[GLPI MSP] solution failed, setting status instead: ' + error);
+              addFollowup(ticketId, content);
+              Glpi.request('PUT', 'Ticket/' + ticketId, {input: {id: ticketId, status: 5}});
+          }
+      }
+
+      try {
+          var p = JSON.parse(value),
+              result = {tags: {}};
+
+          ['glpi_url', 'glpi_user_token', 'event_id', 'event_value'].forEach(function (key) {
+              if (!clean(p[key])) {
+                  throw 'Missing required parameter: ' + key;
+              }
+          });
+          Glpi.params = p;
+
+          // Only trigger-based events (source 0) are turned into tickets.
+          if (String(p.event_source) !== '0') {
+              return JSON.stringify(result);
+          }
+
+          var tags = tagMap(p.event_tags),
+              ticketId = clean(p.glpi_ticket_id),
+              isUpdate = String(p.event_update_status) === '1',
+              isRecovery = String(p.event_value) === '0';
+
+          Glpi.login();
+          try {
+              if (!isUpdate && !isRecovery) {
+                  ticketId = openTicket(p, tags);
+                  result.tags.__zbx_glpi_ticket_id = String(ticketId);
+                  result.tags.__zbx_glpi_ticket_link = ticketLink(ticketId);
+              }
+              else if (ticketId) {
+                  if (isRecovery) {
+                      solveTicket(ticketId, p.alert_message);
+                  }
+                  else {
+                      addFollowup(ticketId, p.alert_message);
+                      // On an update, {EVENT.NSEVERITY} already holds the new severity (tested on Zabbix 7.0;
+                      // {EVENT.UPDATE.NSEVERITY} is not resolved in webhook parameters there), so keep the
+                      // ticket urgency in line with it.
+                      var severity = clean(p.event_nseverity);
+                      if (SEVERITY_TO_URGENCY[severity]) {
+                          Glpi.request('PUT', 'Ticket/' + ticketId, {input: {id: ticketId,
+                              urgency: SEVERITY_TO_URGENCY[severity]}});
+                      }
+                  }
+              }
+              else {
+                  Zabbix.log(3, '[GLPI MSP] no GLPI ticket recorded for event ' + p.event_id + ', nothing to update');
+              }
+          }
+          finally {
+              Glpi.logout();
+          }
+          return JSON.stringify(result);
+      }
+      catch (error) {
+          Zabbix.log(3, '[GLPI MSP] notification failed: ' + error);
+          throw 'Sending failed: ' + error;
+      }
+    process_tags: 'YES'
+    show_event_menu: 'YES'
+    event_menu_url: '{EVENT.TAGS.__zbx_glpi_ticket_link}'
+    event_menu_name: GLPI ticket {EVENT.TAGS.__zbx_glpi_ticket_id}
+    description: |
+      Opens GLPI incidents in the customer's entity, links the affected asset, adds follow-ups on
+      updates and a solution on recovery. Requires the host tags written by msp-glue.
+      Source: zabbix/media/glpi_msp.js in the platform kit.
+    message_templates:
+    - event_source: TRIGGERS
+      operation_mode: PROBLEM
+      subject: 'Problem: {EVENT.NAME}'
+      message: <p><b>Problem started:</b> {EVENT.DATE} {EVENT.TIME}<br><b>Customer:</b> {EVENT.TAGS.tenant_name}<br><b>Host:</b> {HOST.NAME} ({HOST.IP})<br><b>Site:</b> {EVENT.TAGS.site}<br><b>Problem:</b> {EVENT.NAME}<br><b>Severity:</b> {EVENT.SEVERITY}<br><b>Operational data:</b> {EVENT.OPDATA}<br><b>Zabbix event:</b> {EVENT.ID}</p>
+    - event_source: TRIGGERS
+      operation_mode: RECOVERY
+      subject: 'Resolved in {EVENT.DURATION}: {EVENT.NAME}'
+      message: <p><b>Recovered in Zabbix</b> after {EVENT.DURATION}, at {EVENT.RECOVERY.DATE} {EVENT.RECOVERY.TIME}.<br><b>Problem:</b> {EVENT.NAME}<br><b>Host:</b> {HOST.NAME}<br><b>Zabbix event:</b> {EVENT.ID}</p>
+    - event_source: TRIGGERS
+      operation_mode: UPDATE
+      subject: 'Updated problem: {EVENT.NAME}'
+      message: '<p>{USER.FULLNAME} {EVENT.UPDATE.ACTION} the problem at {EVENT.UPDATE.DATE} {EVENT.UPDATE.TIME}.</p><p>{EVENT.UPDATE.MESSAGE}</p><p>Current status: {EVENT.STATUS}, age {EVENT.AGE}, acknowledged: {EVENT.ACK.STATUS}.</p>'

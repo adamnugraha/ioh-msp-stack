@@ -1,0 +1,13 @@
+---
+- platform_name: "Cisco IOS-XE"
+  name: "Build config header"
+  regex: '^Building\s+configuration.*\n'
+- platform_name: "Cisco IOS-XE"
+  name: "Current configuration size"
+  regex: '^Current\s+configuration\s*:.*\n'
+- platform_name: "Cisco IOS-XE"
+  name: "Last change timestamps"
+  regex: '^!\s*(Last|NVRAM)\s+config.*\n'
+- platform_name: "Cisco IOS-XE"
+  name: "NTP clock period"
+  regex: '^ntp\s+clock-period.*\n'

@@ -1,0 +1,31 @@
+# Edge collector: a small VM (2 vCPU, 2-4 GB RAM) at a customer site or in the customer's
+# network segment. It runs an active Zabbix proxy that connects OUT to the central Zabbix
+# server on TCP 10051, encrypted with a pre-shared key. No inbound firewall rule is needed
+# at the customer side, and overlapping customer addresses never reach the central platform.
+#
+# 1. On the platform:  mspctl proxy add <customer code> <proxy name> [--address <reachable name or IP>]
+# 2. Copy the printed values into edge-collector/.env on the collector VM.
+# 3. docker compose up -d
+services:
+  zabbix-proxy:
+    image: zabbix/zabbix-proxy-sqlite3:${ZABBIX_IMAGE_TAG:-alpine-7.0.31}
+    restart: unless-stopped
+    environment:
+      ZBX_HOSTNAME: ${ZBX_HOSTNAME}
+      ZBX_SERVER_HOST: ${ZBX_SERVER_HOST}
+      ZBX_PROXYMODE: "0"
+      ZBX_TLSCONNECT: psk
+      ZBX_TLSACCEPT: psk
+      ZBX_TLSPSKIDENTITY: ${ZBX_TLSPSKIDENTITY}
+      ZBX_TLSPSKFILE: zabbix_proxy.psk
+      ZBX_PROXYOFFLINEBUFFER: "72"       # keep 72 hours of data if the link to the server is down
+      ZBX_STARTPOLLERS: "5"
+      ZBX_STARTPINGERS: "3"
+      ZBX_STARTSNMPPOLLERS: "3"
+      TZ: ${TZ:-Asia/Jakarta}
+    volumes:
+      - ./zabbix_proxy.psk:/var/lib/zabbix/enc/zabbix_proxy.psk:ro
+      - proxy_data:/var/lib/zabbix/db_data
+
+volumes:
+  proxy_data:

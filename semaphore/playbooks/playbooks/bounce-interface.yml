@@ -1,0 +1,44 @@
+---
+# Shuts and re-enables one interface. Run only through an approved GLPI change.
+# Required variables (from the change description "automation:" block):
+#   device:    Nautobot device name (also used as the Semaphore limit)
+#   interface: interface name, for example GigabitEthernet0/2
+- name: Bounce one interface
+  hosts: "{{ device }}"
+  gather_facts: false
+  serial: 1
+  vars:
+    protected: ["mgmt", "management", "loopback0", "vlan1"]
+  tasks:
+    - name: Check the request
+      ansible.builtin.assert:
+        that:
+          - interface is defined and interface | length > 0
+          - interface | lower not in protected
+        fail_msg: "Missing or protected interface: {{ interface | default('none') }}"
+
+    - name: Shut the interface (Cisco IOS and IOS-XE)
+      when: ansible_network_os == "cisco.ios.ios"
+      cisco.ios.ios_config:
+        parents: "interface {{ interface }}"
+        lines: ["shutdown"]
+
+    - name: Wait five seconds
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Re-enable the interface (Cisco IOS and IOS-XE)
+      when: ansible_network_os == "cisco.ios.ios"
+      cisco.ios.ios_config:
+        parents: "interface {{ interface }}"
+        lines: ["no shutdown"]
+
+    - name: Show the interface afterwards
+      when: ansible_network_os == "cisco.ios.ios"
+      ansible.netcommon.cli_command:
+        command: "show interfaces {{ interface }} | include line protocol"
+      register: after
+
+    - name: Result
+      ansible.builtin.debug:
+        var: after.stdout

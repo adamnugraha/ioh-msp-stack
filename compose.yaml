@@ -1,0 +1,30 @@
+# Single-host deployment of the whole platform (pilot and small production).
+# For a multi-VM deployment, run each file under components/ on its own VM with the same .env.
+#
+#   docker network create --subnet <a range no managed network uses> msp    (once, see README)
+#   docker compose up -d               (starts everything below)
+#
+# The reverse proxy, Grafana and Keycloak are listed too but start only when their profile is on:
+# COMPOSE_PROFILES in .env (for example COMPOSE_PROFILES=proxy,grafana). ./scripts/install.sh proxy and
+# ./scripts/install.sh grafana switch them on for you.
+include:
+  - path: components/postgres/compose.yaml
+    env_file: .env
+  - path: components/forgejo/compose.yaml
+    env_file: .env
+  - path: components/nautobot/compose.yaml
+    env_file: .env
+  - path: components/zabbix/compose.yaml
+    env_file: .env
+  - path: components/glpi/compose.yaml
+    env_file: .env
+  - path: components/semaphore/compose.yaml
+    env_file: .env
+  - path: components/glue/compose.yaml
+    env_file: .env
+  - path: components/proxy/compose.yaml      # profile "proxy"
+    env_file: .env
+  - path: components/grafana/compose.yaml    # profile "grafana" (phase 3)
+    env_file: .env
+  - path: components/keycloak/compose.yaml   # profile "sso" (phase 3)
+    env_file: .env

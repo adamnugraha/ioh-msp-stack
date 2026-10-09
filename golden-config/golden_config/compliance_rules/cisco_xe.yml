@@ -1,0 +1,32 @@
+---
+- feature_slug: "hostname"
+  platform_name: "Cisco IOS-XE"
+  config_ordered: false
+  config_type: "cli"
+  match_config: |
+    hostname
+- feature_slug: "ntp"
+  platform_name: "Cisco IOS-XE"
+  config_ordered: false
+  config_type: "cli"
+  match_config: |
+    ntp server
+- feature_slug: "logging"
+  platform_name: "Cisco IOS-XE"
+  config_ordered: false
+  config_type: "cli"
+  match_config: |
+    logging host
+- feature_slug: "snmp"
+  platform_name: "Cisco IOS-XE"
+  config_ordered: false
+  config_type: "cli"
+  match_config: |
+    snmp-server location
+    snmp-server contact
+- feature_slug: "banner"
+  platform_name: "Cisco IOS-XE"
+  config_ordered: true
+  config_type: "cli"
+  match_config: |
+    banner motd

@@ -1,0 +1,15 @@
+# Lab only: publish each web interface on a local port instead of using the reverse proxy.
+#   docker compose -f compose.yaml -f lab/compose.ports.yaml up -d
+services:
+  nautobot:
+    ports: ["8081:8080"]
+  zabbix-web:
+    ports: ["8082:8080"]
+  glpi:
+    ports: ["8083:80"]
+  semaphore:
+    ports: ["8084:3000"]
+  forgejo:
+    ports: ["8085:3000"]
+  msp-glue:
+    ports: ["8086:80"]

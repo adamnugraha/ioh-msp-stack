@@ -1,0 +1,45 @@
+# Grafana (phase 3): customer-facing dashboards. One Grafana organisation per customer,
+# each with a Zabbix data source that can only read that customer's hosts.
+services:
+  grafana:
+    # Optional: started only when COMPOSE_PROFILES in .env lists "grafana" (./scripts/install.sh grafana sets it).
+    profiles: ["grafana"]
+    image: ${GRAFANA_IMAGE}
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_DATABASE_TYPE: postgres
+      GF_DATABASE_HOST: postgres:5432
+      GF_DATABASE_NAME: grafana
+      GF_DATABASE_USER: grafana
+      GF_DATABASE_PASSWORD: ${GRAFANA_DB_PASSWORD}
+      GF_SERVER_ROOT_URL: https://grafana.${MSP_DOMAIN}/
+      # Installed at start-up (needs Internet access to grafana.com, or mount the plugin folder).
+      # Pinned to the version tested with this kit; change it on purpose, after a lab test.
+      GF_PLUGINS_PREINSTALL: alexanderzobnin-zabbix-app@6.8.0
+      # Customers never create or join organisations by themselves. New accounts land as Viewers in
+      # the empty "Main Org." (id 1, keep it free of data sources); msp-glue then moves each customer
+      # user into its own organisation. Without auto-assignment Grafana would give every new user a
+      # personal organisation, which Grafana 13.2 cannot delete through its API.
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_ALLOW_ORG_CREATE: "false"
+      GF_USERS_AUTO_ASSIGN_ORG: "true"
+      GF_USERS_AUTO_ASSIGN_ORG_ID: "1"
+      GF_USERS_AUTO_ASSIGN_ORG_ROLE: "Viewer"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      TZ: ${TZ}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks: [msp]
+
+volumes:
+  grafana_data:
+
+networks:
+  msp:
+    external: true
+    name: msp

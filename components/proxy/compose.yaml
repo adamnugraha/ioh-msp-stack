@@ -1,0 +1,33 @@
+# Reverse proxy (Caddy): HTTPS for every web interface and the access rules in the Caddyfile.
+services:
+  proxy:
+    # Optional: started only when COMPOSE_PROFILES in .env lists "proxy" (./scripts/install.sh proxy sets it).
+    profiles: ["proxy"]
+    image: caddy:2.10
+    restart: unless-stopped
+    environment:
+      MSP_DOMAIN: ${MSP_DOMAIN}
+      # "internal" (Caddy's own certificate authority) or "/certs/fullchain.pem /certs/privkey.pem"
+      # for IOH certificates; ./scripts/install.sh certs sets it.
+      CADDY_TLS: ${CADDY_TLS:-internal}
+      # Networks allowed to reach the engineering tools (space-separated CIDR list).
+      ADMIN_NETWORKS: ${ADMIN_NETWORKS:-10.0.0.0/8 172.16.0.0/12 192.168.0.0/16}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Optional IOH certificates (fullchain.pem, privkey.pem), put there by ./scripts/install.sh certs.
+      - ./certs:/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [msp]
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  msp:
+    external: true
+    name: msp

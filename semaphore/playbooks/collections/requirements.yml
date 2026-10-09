@@ -1,0 +1,11 @@
+---
+# Installed by Semaphore before each run (needs Internet access to Ansible Galaxy,
+# or point it at an internal mirror).
+collections:
+  - name: ansible.netcommon
+  - name: cisco.ios
+  - name: cisco.nxos
+  - name: arista.eos
+  - name: junipernetworks.junos
+  - name: community.routeros
+  - name: fortinet.fortios

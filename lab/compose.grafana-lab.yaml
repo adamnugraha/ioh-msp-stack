@@ -1,0 +1,10 @@
+# Lab only: Grafana without Internet access. The Zabbix plugin is unpacked into
+# lab/grafana-plugins/ beforehand (see lab/run-lab.sh) instead of being downloaded at start-up.
+services:
+  grafana:
+    environment:
+      GF_PLUGINS_PREINSTALL: ""
+      GF_SERVER_ROOT_URL: http://localhost:8087/
+    volumes:
+      - ./lab/grafana-plugins:/var/lib/grafana/plugins
+    ports: ["8087:3000"]

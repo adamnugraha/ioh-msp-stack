@@ -1,0 +1,38 @@
+# Forgejo: private Git server for configuration backups, templates, playbooks and the glue code.
+services:
+  forgejo:
+    image: ${FORGEJO_IMAGE}
+    restart: unless-stopped
+    environment:
+      USER_UID: "1000"
+      USER_GID: "1000"
+      FORGEJO__database__DB_TYPE: postgres
+      FORGEJO__database__HOST: postgres:5432
+      FORGEJO__database__NAME: forgejo
+      FORGEJO__database__USER: forgejo
+      FORGEJO__database__PASSWD: ${FORGEJO_DB_PASSWORD}
+      FORGEJO__server__DOMAIN: git.${MSP_DOMAIN}
+      FORGEJO__server__ROOT_URL: https://git.${MSP_DOMAIN}/
+      FORGEJO__server__DISABLE_SSH: "true"
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      FORGEJO__service__REQUIRE_SIGNIN_VIEW: "true"
+      FORGEJO__repository__DEFAULT_BRANCH: main
+      FORGEJO__repository__DEFAULT_PRIVATE: private
+      TZ: ${TZ}
+    volumes:
+      - forgejo_data:/data
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks:
+      msp:
+        # A dotted name: Nautobot only accepts Git URLs whose host name contains a dot.
+        aliases: [forgejo.platform.internal]
+
+volumes:
+  forgejo_data:
+
+networks:
+  msp:
+    external: true
+    name: msp

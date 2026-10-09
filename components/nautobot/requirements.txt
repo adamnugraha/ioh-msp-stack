@@ -1,0 +1,10 @@
+# Nautobot apps used by the platform. Versions tested together in the lab (October 2026).
+nautobot-golden-config==3.0.8
+nautobot-plugin-nornir==3.2.5
+# scrapli 2026.10.x (released 3 October 2026) is a rewrite that drops the "Scrapli" class,
+# which breaks nornir-scrapli and with it every Golden Config job. Keep the previous series
+# until nornir-scrapli publishes a compatible release.
+scrapli<2026.10
+# Optional apps for later (uncomment, rebuild, and enable in nautobot_config.py):
+# nautobot-ssot[meraki,cisco_sdwan]==4.7.0       # import devices from Meraki Dashboard and Catalyst SD-WAN Manager
+# nautobot-device-onboarding==5.6.0              # build devices, interfaces and addresses by logging in to them

@@ -1,0 +1,6 @@
+# Lab only: run msp-glue from the source folder so code changes apply on restart.
+# Paths in extra -f files resolve from the project folder (where compose.yaml is).
+services:
+  msp-glue:
+    volumes:
+      - ./glue/msp_glue:/usr/local/lib/python3.12/site-packages/msp_glue:ro

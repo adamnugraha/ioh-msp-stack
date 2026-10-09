@@ -1,0 +1,34 @@
+---
+# Applies pending security updates to Linux servers, one host at a time.
+# Optional variables: allow_reboot (default false)
+- name: Patch Linux servers
+  hosts: "{{ device | default('linux_servers:server') }}"
+  become: true
+  serial: 1
+  vars:
+    allow_reboot: false
+  tasks:
+    - name: Debian and Ubuntu security updates
+      when: ansible_facts.os_family == "Debian"
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: safe
+      register: apt_result
+
+    - name: RHEL family security updates
+      when: ansible_facts.os_family == "RedHat"
+      ansible.builtin.dnf:
+        name: "*"
+        security: true
+        state: latest
+      register: dnf_result
+
+    - name: Check whether a reboot is needed
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_flag
+
+    - name: Reboot when allowed and needed
+      when: allow_reboot | bool and reboot_flag.stat.exists
+      ansible.builtin.reboot:
+        reboot_timeout: 900

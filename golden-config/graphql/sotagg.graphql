@@ -1,0 +1,20 @@
+query ($device_id: ID!) {
+  device(id: $device_id) {
+    hostname: name
+    serial
+    config_context
+    tenant { name _custom_field_data }
+    location { name parent { name } }
+    role { name }
+    platform { name network_driver }
+    primary_ip4 { address }
+    interfaces {
+      name
+      description
+      enabled
+      mode
+      type
+      ip_addresses { address }
+    }
+  }
+}

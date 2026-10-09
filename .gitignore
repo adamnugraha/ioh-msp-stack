@@ -1,0 +1,19 @@
+# Secrets and local state: never commit these
+.env
+secrets/platform/
+secrets/tenants/
+lab/.edge-bankx/
+lab/grafana-plugins/
+edge-collector/.env
+edge-collector/zabbix_proxy.psk
+**/certs/*.crt
+__pycache__/
+*.pyc
+.pytest_cache/
+**/certs/*.pem
+**/certs/*.key
+.install-state
+.install-state.tmp
+install.log
+caddy-root.crt
+components/grafana/plugins/

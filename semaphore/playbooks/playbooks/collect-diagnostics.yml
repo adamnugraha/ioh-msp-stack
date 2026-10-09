@@ -1,0 +1,47 @@
+---
+# Read-only: collects diagnostics and prints them in the Semaphore task log.
+# Safe to run at any time. Use "limit" to target one device.
+- name: Collect diagnostics from network devices
+  hosts: all:!linux_servers
+  gather_facts: false
+  vars:
+    diag_commands:
+      cisco.ios.ios: ["show version", "show ip interface brief", "show logging | last 50"]
+      cisco.nxos.nxos: ["show version", "show interface brief", "show logging last 50"]
+      arista.eos.eos: ["show version", "show interfaces status", "show logging last 50"]
+      junipernetworks.junos.junos: ["show version", "show interfaces terse", "show log messages | last 50"]
+      community.routeros.routeros: ["/system resource print", "/interface print", "/log print"]
+  tasks:
+    - name: Run show commands
+      when: ansible_network_os is defined
+      ansible.netcommon.cli_command:
+        command: "{{ item }}"
+      loop: "{{ diag_commands[ansible_network_os] | default(['show version']) }}"
+      register: diag
+    - name: Print results
+      when: diag is defined and diag.results is defined
+      ansible.builtin.debug:
+        msg: "{{ item.item }}\n{{ item.stdout | default('') }}"
+      loop: "{{ diag.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+- name: Collect diagnostics from Linux servers
+  hosts: linux_servers:server
+  gather_facts: true
+  tasks:
+    - name: Summary
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ ansible_facts['distribution'] | default('?') }}
+          {{ ansible_facts['distribution_version'] | default('') }},
+          kernel {{ ansible_facts['kernel'] | default('?') }},
+          uptime {{ ((ansible_facts['uptime_seconds'] | default(0)) / 3600) | round(1) }} h,
+          load {{ ansible_facts['loadavg'] | default({}) }}
+    - name: Disk usage
+      ansible.builtin.command: df -hP
+      register: df
+      changed_when: false
+    - name: Print disk usage
+      ansible.builtin.debug:
+        var: df.stdout_lines

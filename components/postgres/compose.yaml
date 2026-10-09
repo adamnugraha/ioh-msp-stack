@@ -1,0 +1,78 @@
+# Shared database tier: PostgreSQL (Nautobot, Zabbix, Semaphore, Forgejo, Keycloak, Grafana),
+# MariaDB (GLPI) and Valkey (Nautobot cache and job queue).
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      NAUTOBOT_DB_PASSWORD: ${NAUTOBOT_DB_PASSWORD}
+      ZABBIX_DB_PASSWORD: ${ZABBIX_DB_PASSWORD}
+      SEMAPHORE_DB_PASSWORD: ${SEMAPHORE_DB_PASSWORD}
+      FORGEJO_DB_PASSWORD: ${FORGEJO_DB_PASSWORD}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD}
+      TZ: ${TZ}
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=400"
+      - "-c"
+      - "shared_buffers=512MB"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./init-databases.sh:/docker-entrypoint-initdb.d/10-init-databases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [msp]
+
+  mariadb:
+    image: ${MARIADB_IMAGE}
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: glpi
+      MARIADB_USER: glpi
+      MARIADB_PASSWORD: ${GLPI_DB_PASSWORD}
+      TZ: ${TZ}
+    command:
+      - "--character-set-server=utf8mb4"
+      - "--collation-server=utf8mb4_unicode_ci"
+      - "--innodb-buffer-pool-size=512M"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [msp]
+
+  valkey:
+    image: ${VALKEY_IMAGE}
+    restart: unless-stopped
+    command: ["sh", "-c", "valkey-server --appendonly yes --requirepass \"$$VALKEY_PASSWORD\""]
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD}
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$VALKEY_PASSWORD\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [msp]
+
+volumes:
+  pg_data:
+  mariadb_data:
+  valkey_data:
+
+networks:
+  msp:
+    external: true
+    name: msp

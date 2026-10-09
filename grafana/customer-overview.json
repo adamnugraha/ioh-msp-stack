@@ -1,0 +1,78 @@
+{
+  "title": "Customer service overview",
+  "uid": "msp-customer-overview",
+  "editable": false,
+  "tags": ["managed-services"],
+  "timezone": "browser",
+  "refresh": "1m",
+  "time": {"from": "now-24h", "to": "now"},
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "id": 1,
+      "type": "alexanderzobnin-zabbix-triggers-panel",
+      "title": "Open problems",
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 0},
+      "datasource": {"type": "alexanderzobnin-zabbix-datasource", "uid": "${DS_ZABBIX}"},
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "5",
+          "datasource": {"type": "alexanderzobnin-zabbix-datasource", "uid": "${DS_ZABBIX}"},
+          "group": {"filter": "/.*/"},
+          "host": {"filter": "/.*/"},
+          "proxy": {"filter": ""},
+          "trigger": {"filter": ""},
+          "tags": {"filter": ""},
+          "showProblems": "problems",
+          "options": {"minSeverity": 2, "acknowledged": 2, "sortProblems": "default", "limit": 200,
+                      "hostsInMaintenance": true, "showDisabledItems": false}
+        }
+      ],
+      "options": {"hostField": true, "severityField": true, "statusField": true, "ageField": true,
+                  "descriptionField": true, "showTags": false, "pageSize": 10}
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Round-trip time (ICMP)",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 9},
+      "datasource": {"type": "alexanderzobnin-zabbix-datasource", "uid": "${DS_ZABBIX}"},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "0",
+          "datasource": {"type": "alexanderzobnin-zabbix-datasource", "uid": "${DS_ZABBIX}"},
+          "group": {"filter": "/.*/"},
+          "host": {"filter": "/.*/"},
+          "itemTag": {"filter": ""},
+          "item": {"filter": "/ICMP response time/"},
+          "functions": [],
+          "options": {"showDisabledItems": false, "skipEmptyValues": false}
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Packet loss (ICMP)",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 9},
+      "datasource": {"type": "alexanderzobnin-zabbix-datasource", "uid": "${DS_ZABBIX}"},
+      "fieldConfig": {"defaults": {"unit": "percent", "max": 100, "min": 0}, "overrides": []},
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "0",
+          "datasource": {"type": "alexanderzobnin-zabbix-datasource", "uid": "${DS_ZABBIX}"},
+          "group": {"filter": "/.*/"},
+          "host": {"filter": "/.*/"},
+          "itemTag": {"filter": ""},
+          "item": {"filter": "/ICMP loss/"},
+          "functions": [],
+          "options": {"showDisabledItems": false, "skipEmptyValues": false}
+        }
+      ]
+    }
+  ]
+}

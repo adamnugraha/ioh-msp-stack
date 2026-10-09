@@ -1,0 +1,25 @@
+{#- Intended configuration for Cisco IOS and IOS-XE, by feature.
+    Data comes from the GraphQL query "MSP golden config data" (top-level keys: hostname,
+    config_context, tenant, location, role, platform, interfaces).
+    Platform-wide standards live in the config context "msp-standards"; a customer can
+    override any value with a config context scoped to its tenant (higher weight). -#}
+{% set std = config_context.get("msp_standards", {}) %}
+hostname {{ hostname }}
+!
+{% for server in std.get("ntp_servers", []) %}
+ntp server {{ server }}
+{% endfor %}
+!
+{% for host in std.get("logging_hosts", []) %}
+logging host {{ host }}
+{% endfor %}
+!
+{% if std.get("snmp_location") %}
+snmp-server location {{ std.snmp_location }} / {{ location.name }}
+{% endif %}
+snmp-server contact {{ std.get("snmp_contact", "noc@indosatooredoo.com") }}
+!
+banner motd ^C
+{{ std.get("banner", "Authorised access only. This device is managed by Indosat Ooredoo Hutchison.") }}
+^C
+!

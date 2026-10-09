@@ -1,0 +1,83 @@
+# Nautobot (network source of truth) with Golden Config.
+# Three containers share one image: the web application, the job worker and the job scheduler.
+x-nautobot-common: &nautobot-common
+  image: msp/nautobot:3.2.6-gc3.0.8
+  restart: unless-stopped
+  environment: &nautobot-env
+    NAUTOBOT_DB_ENGINE: django.db.backends.postgresql
+    NAUTOBOT_DB_HOST: postgres
+    NAUTOBOT_DB_NAME: nautobot
+    NAUTOBOT_DB_USER: nautobot
+    NAUTOBOT_DB_PASSWORD: ${NAUTOBOT_DB_PASSWORD}
+    NAUTOBOT_REDIS_HOST: valkey
+    NAUTOBOT_REDIS_PORT: "6379"
+    NAUTOBOT_REDIS_PASSWORD: ${VALKEY_PASSWORD}
+    NAUTOBOT_SECRET_KEY: ${NAUTOBOT_SECRET_KEY}
+    NAUTOBOT_ALLOWED_HOSTS: "*"
+    NAUTOBOT_CSRF_TRUSTED_ORIGINS: https://nautobot.${MSP_DOMAIN}
+    NAUTOBOT_TIME_ZONE: ${TZ}
+    NAUTOBOT_LOG_LEVEL: INFO
+    NAUTOBOT_CONFIG: /opt/nautobot/nautobot_config.py
+    NAUTOBOT_INSTALLATION_METRICS_ENABLED: "False"
+  volumes:
+    # Customer secrets (device logins) as read-only files, one folder per customer.
+    # Shared with msp-glue. See tenants/README.md.
+    - ../../secrets:/run/msp-secrets:ro
+    - nautobot_git:/opt/nautobot/git
+    - nautobot_media:/opt/nautobot/media
+  networks: [msp]
+
+services:
+  nautobot:
+    <<: *nautobot-common
+    build:
+      context: .
+      args:
+        NAUTOBOT_IMAGE: ${NAUTOBOT_IMAGE}
+    environment:
+      <<: *nautobot-env
+      NAUTOBOT_CREATE_SUPERUSER: "true"
+      NAUTOBOT_SUPERUSER_NAME: ${NAUTOBOT_SUPERUSER_NAME}
+      NAUTOBOT_SUPERUSER_EMAIL: ${NAUTOBOT_SUPERUSER_EMAIL}
+      NAUTOBOT_SUPERUSER_PASSWORD: ${NAUTOBOT_SUPERUSER_PASSWORD}
+      NAUTOBOT_SUPERUSER_API_TOKEN: ${NAUTOBOT_SUPERUSER_API_TOKEN}
+    depends_on:
+      postgres: {condition: service_healthy}
+      valkey: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      # The first start applies about 500 database migrations: 5 minutes on 4 vCPU,
+      # up to 15 minutes on 2 vCPU. Failures during this period do not count.
+      start_period: 1200s
+      retries: 5
+
+  nautobot-worker:
+    <<: *nautobot-common
+    entrypoint: ["sh", "-c", "nautobot-server celery worker -l INFO --events --concurrency=${NAUTOBOT_WORKER_CONCURRENCY:-4}"]
+    depends_on:
+      nautobot: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "nautobot-server celery inspect ping --destination celery@$$HOSTNAME"]
+      interval: 60s
+      timeout: 20s
+      start_period: 60s
+      retries: 3
+
+  nautobot-scheduler:
+    <<: *nautobot-common
+    entrypoint: ["sh", "-c", "nautobot-server celery beat -l INFO"]
+    depends_on:
+      nautobot: {condition: service_healthy}
+    healthcheck:
+      disable: true
+
+volumes:
+  nautobot_git:
+  nautobot_media:
+
+networks:
+  msp:
+    external: true
+    name: msp

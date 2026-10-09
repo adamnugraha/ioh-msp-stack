@@ -1,0 +1,12 @@
+default:
+  username: netadmin
+  password: Lab-Device-Pass1
+  server:
+    plugin: "ParamikoSshServer"
+    configuration:
+      address: "0.0.0.0"
+      timeout: 1
+hosts:
+  router:
+    port: 22
+    platform: cisco_ios

@@ -1,0 +1,60 @@
+# msp-glue: the integration service that keeps every tool in step with Nautobot,
+# receives webhooks from Nautobot and GLPI, and runs the periodic reconciliation.
+services:
+  msp-glue:
+    image: msp/glue:1.0
+    build:
+      context: ../../glue
+    restart: unless-stopped
+    environment:
+      NAUTOBOT_URL: http://nautobot:8080
+      NAUTOBOT_TOKEN: ${NAUTOBOT_SUPERUSER_API_TOKEN}
+      NAUTOBOT_WEBHOOK_SECRET: ${NAUTOBOT_WEBHOOK_SECRET}
+      ZABBIX_URL: http://zabbix-web:8080
+      ZABBIX_PUBLIC_URL: ${ZABBIX_PUBLIC_URL}
+      ZABBIX_API_TOKEN: ${ZABBIX_API_TOKEN}
+      GLPI_URL: http://glpi
+      GLPI_PUBLIC_URL: ${GLPI_PUBLIC_URL}
+      GLPI_APP_TOKEN: ${GLPI_APP_TOKEN}
+      GLPI_USER_TOKEN: ${GLPI_USER_TOKEN}
+      GLPI_WEBHOOK_SECRET: ${GLPI_WEBHOOK_SECRET}
+      SEMAPHORE_URL: http://semaphore:3000
+      SEMAPHORE_API_TOKEN: ${SEMAPHORE_API_TOKEN}
+      FORGEJO_URL: http://forgejo.platform.internal:3000
+      FORGEJO_API_TOKEN: ${FORGEJO_API_TOKEN}
+      FORGEJO_ORG: msp
+      # Phase 3: set GRAFANA_URL (for example http://grafana:3000) to create customer dashboards.
+      GRAFANA_URL: ${GRAFANA_URL:-}
+      GRAFANA_ADMIN_USER: admin
+      GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      GLUE_RECONCILE_INTERVAL: ${GLUE_RECONCILE_INTERVAL:-600}
+      GLUE_COMPLIANCE_INTERVAL: ${GLUE_COMPLIANCE_INTERVAL:-3600}
+      GLUE_SECRETS_DIR: /run/msp-secrets/tenants
+      GLUE_PUBLIC_HOOK_BASE: http://msp-glue.platform.internal
+      TZ: ${TZ}
+    volumes:
+      - ../../secrets:/run/msp-secrets:ro
+      - ../../glue/mappings.yaml:/app/mappings.yaml:ro
+      # Content uploaded to Forgejo and Zabbix by "mspctl bootstrap platform"
+      - ../../semaphore/playbooks:/app/seed/playbooks:ro
+      - ../../golden-config:/app/seed/golden-config:ro
+      - ../../zabbix/media:/app/seed/zabbix:ro
+      - ../../grafana:/app/seed/grafana:ro
+    # Listen on port 80 inside the container: GLPI only calls webhook URLs without a port number.
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost/healthz').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      msp:
+        # Nautobot and GLPI only accept webhook URLs whose host name contains a dot,
+        # and GLPI refuses URLs with a port number, hence a dotted alias on port 80.
+        aliases: [msp-glue.platform.internal]
+
+networks:
+  msp:
+    external: true
+    name: msp

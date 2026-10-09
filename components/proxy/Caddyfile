@@ -1,0 +1,83 @@
+# Reverse proxy and TLS for every web interface of the platform.
+#
+# Certificates: by default (CADDY_TLS=internal in .env) Caddy acts as its own small certificate
+# authority, which is fine for internal names (*.msp.example.internal). Install Caddy's root
+# certificate on NOC PCs: ./scripts/install.sh proxy saves it as caddy-root.crt in the kit folder.
+# To use IOH certificates instead (a certificate for *.<MSP_DOMAIN>, or one listing every name below):
+#   ./scripts/install.sh certs <fullchain.pem> <privkey.pem>
+# It checks the pair, copies it to components/proxy/certs/ and sets
+# CADDY_TLS="/certs/fullchain.pem /certs/privkey.pem" in .env. The setting lives in .env, so kit
+# updates never undo it.
+#
+# Access: tools for engineers answer only from ADMIN_NETWORKS (NOC, VPN). The GLPI customer
+# portal and Grafana answer from anywhere, but GLPI's API paths stay internal.
+{
+	email noc@example.internal
+}
+
+(site_tls) {
+	tls {$CADDY_TLS:internal}
+}
+
+(engineers_only) {
+	@outside not remote_ip {$ADMIN_NETWORKS}
+	respond @outside "This service is only available from the IOH network." 403
+}
+
+nautobot.{$MSP_DOMAIN} {
+	import site_tls
+	import engineers_only
+	reverse_proxy nautobot:8080
+}
+
+zabbix.{$MSP_DOMAIN} {
+	import site_tls
+	import engineers_only
+	reverse_proxy zabbix-web:8080
+}
+
+semaphore.{$MSP_DOMAIN} {
+	import site_tls
+	import engineers_only
+	reverse_proxy semaphore:3000
+}
+
+git.{$MSP_DOMAIN} {
+	import site_tls
+	import engineers_only
+	reverse_proxy forgejo:3000
+}
+
+glue.{$MSP_DOMAIN} {
+	import site_tls
+	import engineers_only
+	reverse_proxy msp-glue:80
+}
+
+# Customer-facing: the service desk portal. The REST APIs are for the platform only.
+glpi.{$MSP_DOMAIN} {
+	import site_tls
+	@api_outside {
+		path /apirest.php* /api.php*
+		not remote_ip {$ADMIN_NETWORKS}
+	}
+	respond @api_outside "Not available" 403
+	reverse_proxy glpi:80
+}
+
+# Customer-facing (phase 3): dashboards.
+grafana.{$MSP_DOMAIN} {
+	import site_tls
+	reverse_proxy grafana:3000
+}
+
+# Phase 3: single sign-on. The admin console stays internal.
+sso.{$MSP_DOMAIN} {
+	import site_tls
+	@admin_outside {
+		path /admin*
+		not remote_ip {$ADMIN_NETWORKS}
+	}
+	respond @admin_outside "Not available" 403
+	reverse_proxy keycloak:8080
+}

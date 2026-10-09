@@ -1,0 +1,79 @@
+# Zabbix monitoring: server, web frontend and one central proxy.
+# Customer-site proxies run from edge-collector/compose.yaml on small VMs at the customer side.
+services:
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:${ZABBIX_IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      DB_SERVER_HOST: postgres
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: ${ZABBIX_DB_PASSWORD}
+      ZBX_CACHESIZE: 256M
+      ZBX_HISTORYCACHESIZE: 64M
+      ZBX_TRENDCACHESIZE: 32M
+      ZBX_VALUECACHESIZE: 256M
+      ZBX_STARTPOLLERS: "10"
+      ZBX_STARTPINGERS: "5"
+      ZBX_STARTSNMPPOLLERS: "5"
+      ZBX_STARTPREPROCESSORS: "8"
+      ZBX_STARTALERTERS: "5"
+      ZBX_WEBHOOKTIMEOUT: "30s"
+      ZBX_HOUSEKEEPINGFREQUENCY: "1"
+      ZBX_PROXYCONFIGFREQUENCY: "60"
+      TZ: ${TZ}
+    ports:
+      # Active proxies at customer sites connect to this port (protect it with a firewall).
+      - "10051:10051"
+    volumes:
+      - zabbix_alertscripts:/usr/lib/zabbix/alertscripts
+      - zabbix_externalscripts:/usr/lib/zabbix/externalscripts
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks: [msp]
+
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:${ZABBIX_IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_SERVER_NAME: IOH Managed Services
+      DB_SERVER_HOST: postgres
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: ${ZABBIX_DB_PASSWORD}
+      PHP_TZ: ${TZ}
+    depends_on:
+      - zabbix-server
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/ping || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks: [msp]
+
+  # Central proxy for devices reachable over the IOH management network.
+  zabbix-proxy-central:
+    image: zabbix/zabbix-proxy-sqlite3:${ZABBIX_IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      ZBX_HOSTNAME: proxy-central-01
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_PROXYMODE: "0"
+      ZBX_STARTPOLLERS: "10"
+      ZBX_STARTPINGERS: "5"
+      ZBX_STARTSNMPPOLLERS: "5"
+      ZBX_PROXYOFFLINEBUFFER: "24"
+      TZ: ${TZ}
+    depends_on:
+      - zabbix-server
+    networks: [msp]
+
+volumes:
+  zabbix_alertscripts:
+  zabbix_externalscripts:
+
+networks:
+  msp:
+    external: true
+    name: msp

@@ -1,0 +1,18 @@
+---
+- platform_name: "Cisco IOS-XE"
+  name: "Local user passwords"
+  description: "Never store password hashes in Git"
+  regex: '(username\s+\S+(?:\s+privilege\s+\d+)?\s+(?:password|secret)\s+\d+\s+)\S+'
+  replace: '\1<redacted>'
+- platform_name: "Cisco IOS-XE"
+  name: "Enable secret"
+  regex: '(enable\s+(?:secret|password)\s+\d+\s+)\S+'
+  replace: '\1<redacted>'
+- platform_name: "Cisco IOS-XE"
+  name: "SNMP community"
+  regex: '(snmp-server\s+community\s+)\S+'
+  replace: '\1<redacted>'
+- platform_name: "Cisco IOS-XE"
+  name: "TACACS and RADIUS keys"
+  regex: '((?:tacacs|radius)(?:-server)?\s+.*key\s+(?:\d+\s+)?)\S+'
+  replace: '\1<redacted>'
