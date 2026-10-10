@@ -1,0 +1,3 @@
+# Release zips are built with "git archive"; the dist folder itself is never inside them.
+dist/ export-ignore
+.gitattributes export-ignore

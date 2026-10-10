@@ -48,8 +48,8 @@ zabbix/media/                Zabbix webhook "GLPI MSP" (JavaScript source and im
 golden-config/               starter content of the shared Golden Config Git repository
 semaphore/playbooks/         starter content of the shared playbook Git repository
 grafana/                     customer dashboard template
-scripts/                     install.sh (the installer), add-customer-secrets.sh, gen-env.sh, backup.sh,
-                             build-mediatype.py
+scripts/                     prepare-server.sh (Docker, address pool, firewall), install.sh (the installer),
+                             add-customer-secrets.sh, gen-env.sh, backup.sh, build-mediatype.py
 tenants/README.md            how customer secrets are stored (in secrets/, never in Git)
 lab/                         simulated devices, sample data, run-lab.sh and check.py
 ```
@@ -79,15 +79,25 @@ Each version of the kit is published as a zip in the `dist` folder of this repos
 SHA-256 checksum in `dist/SHA256SUMS`. On the server (`wget -O` works the same as `curl -o`):
 
 ```bash
-curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.0.0.zip
+curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.0.1.zip
 sha256sum /tmp/ioh-msp-stack.zip      # must equal the line for this file in dist/SHA256SUMS
-sudo mkdir -p /opt/ioh-msp-stack && sudo chown $USER: /opt/ioh-msp-stack
+command -v unzip >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y unzip)
+sudo mkdir -p /opt/ioh-msp-stack && sudo chown "$(id -un):" /opt/ioh-msp-stack
 rm -rf /tmp/kit && mkdir /tmp/kit && unzip -q /tmp/ioh-msp-stack.zip -d /tmp/kit
 cp -a /tmp/kit/*/. /opt/ioh-msp-stack/ && chmod +x /opt/ioh-msp-stack/scripts/*.sh
 ```
 
 `git clone https://github.com/adamnugraha/ioh-msp-stack /opt/ioh-msp-stack` gets the same files
 with git instead.
+
+Prepare the server once: Ubuntu updates, Docker with Compose, Docker's address pool and log
+rotation, and the firewall (add `--proxy` and `--proxy-ca` behind IOH's web proxy). Then log out
+and in again, so your account's docker group membership applies:
+
+```bash
+cd /opt/ioh-msp-stack
+sudo ./scripts/prepare-server.sh --admin-networks "10.10.0.0/16 10.20.0.0/16" --pool 172.31.0.0/16 --tz Asia/Jakarta
+```
 
 Then, from `/opt/ioh-msp-stack`:
 

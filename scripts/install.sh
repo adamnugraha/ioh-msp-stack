@@ -19,8 +19,9 @@
 # Every stage can run again safely. A failed stage stops with the reason, the fix and the command
 # that continues after the fix. Output goes to install.log.
 #
-# Behind a web proxy: export HTTPS_PROXY=http://proxy.example:8080 before running. If the proxy
-# inspects TLS, also export CA_FILE=/path/to/proxy-ca.crt so the two image builds trust it.
+# Prepare the server first with: sudo ./scripts/prepare-server.sh --admin-networks "<NOC and VPN ranges>"
+# Behind a web proxy, prepare-server.sh --proxy (and --proxy-ca) sets everything up; by hand, export
+# HTTPS_PROXY before running and, for a proxy that inspects TLS, CA_FILE=/path/to/proxy-ca.crt.
 # =============================================================================
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -175,7 +176,7 @@ stage_preflight() {
     command -v "$tool" >/dev/null || bad "command '$tool' is missing" "sudo apt-get install -y python3 curl openssl iproute2"
   done
   if ! command -v docker >/dev/null; then
-    bad "Docker is not installed" "curl -fsSL https://get.docker.com | sudo sh   (or IOH's package mirror)"
+    bad "Docker is not installed" "sudo ./scripts/prepare-server.sh --admin-networks \"<NOC and VPN ranges>\" (installs and sets up Docker)"
   elif ! docker info >/dev/null 2>&1; then
     bad "Docker is installed, but user '$(id -un)' cannot use it" "sudo usermod -aG docker $(id -un), then log out and in again"
   else
@@ -192,10 +193,10 @@ stage_preflight() {
     else bad "only ${free_gb:-0} GB free for Docker ($root)" "add disk space: at least 40 GB, 100 GB or more for production"; fi
     if grep -qs default-address-pools /etc/docker/daemon.json; then ok "Docker address pools set in /etc/docker/daemon.json"
     else warn "Docker uses its default address pools (172.17.0.0/16 to 172.31.0.0/16, 192.168.0.0/16)" \
-      "if any managed network uses those ranges, set default-address-pools in /etc/docker/daemon.json (see the guide) and restart Docker"; fi
+      "sudo ./scripts/prepare-server.sh --admin-networks \"<NOC and VPN ranges>\" --pool <range no managed network uses> sets them"; fi
     if [ -n "${HTTPS_PROXY:-${https_proxy:-}}" ] && [ -z "$(docker info -f '{{.HTTPSProxy}}' 2>/dev/null || true)" ]; then
       warn "this shell uses a web proxy, but the Docker daemon has none, so image downloads may fail" \
-        "set the proxy for the Docker service (systemd drop-in, see the guide) and restart Docker"
+        "sudo ./scripts/prepare-server.sh ... --proxy <proxy URL> sets it for the Docker service"
     fi
   fi
 
@@ -257,6 +258,17 @@ for line in sys.stdin:
   if [ -n "$overlaps" ]; then
     bad "the platform network $1 overlaps routes on this server: $(echo "$overlaps" | head -n 2 | tr '\n' ';')" \
       "choose another range with: ./scripts/install.sh settings --subnet <range>"
+    return 1
+  fi
+  # It must also stay outside Docker's own address pool (set by prepare-server.sh or by hand).
+  local pools
+  pools=$(python3 -c 'import json; print(" ".join(p["base"] for p in json.load(open("/etc/docker/daemon.json")).get("default-address-pools", [])))' 2>/dev/null || true)
+  if [ -n "$pools" ] && python3 -c '
+import ipaddress, sys
+want = ipaddress.ip_network(sys.argv[1], strict=False)
+sys.exit(0 if any(want.overlaps(ipaddress.ip_network(p, strict=False)) for p in sys.argv[2:]) else 1)' "$1" $pools; then
+    bad "the platform network $1 lies inside Docker's address pool ($pools)" \
+      "choose a platform range outside it with: ./scripts/install.sh settings --subnet <range>"
     return 1
   fi
   ok "platform network $1 overlaps no route on this server"
@@ -384,15 +396,15 @@ stage_network() {
 stage_images() {
   step "Container images (5 to 30 minutes the first time, depending on the Internet link)"
   load_env
-  local img out reason
+  local img out reason rate_limited=0
   for img in $(dc config --images | sort -u | grep -v '^msp/'); do
     if out=$(docker pull -q "$img" 2>&1); then ok "downloaded $img"
     elif docker image inspect "$img" >/dev/null 2>&1; then warn "could not refresh $img; the copy already on this server is used"
     else
-      reason=$(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | tail -n 1 | cut -c1-200)
+      reason=$(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | tail -n 1 | cut -c1-400)
       case "$reason" in
-        *toomanyrequests*) bad "could not download $img: Docker Hub's download limit ($reason)" \
-          "wait an hour, or run docker login with a free Docker account, then run ./scripts/install.sh again" ;;
+        *toomanyrequests* | *"Too Many Requests"* | *" 429"*) rate_limited=1; bad "could not download $img: Docker Hub's download limit was reached" \
+          "run docker login with a free Docker account (or wait a few hours), then run ./scripts/install.sh again" ;;
         *) bad "could not download $img: $reason" \
           "the Docker service cannot reach the registry: check the firewall, or the proxy settings of the Docker service" ;;
       esac
@@ -404,6 +416,8 @@ stage_images() {
     build+=(--network host --build-arg "HTTPS_PROXY=$p" --build-arg "https_proxy=$p"
             --build-arg "HTTP_PROXY=${HTTP_PROXY:-$p}" --build-arg "http_proxy=${HTTP_PROXY:-$p}")
   fi
+  # prepare-server.sh --proxy-ca keeps the proxy's CA here, so nobody has to export CA_FILE by hand.
+  if [ -z "${CA_FILE:-}" ] && [ -f /usr/local/share/ioh-msp/proxy-ca.pem ]; then CA_FILE=/usr/local/share/ioh-msp/proxy-ca.pem; fi
   if [ -n "${CA_FILE:-}" ]; then
     [ -f "$CA_FILE" ] || fail "CA_FILE=$CA_FILE does not exist" "export CA_FILE=/full/path/to/the/proxy-ca.crt"
     grep -q 'BEGIN CERTIFICATE' "$CA_FILE" || fail "CA_FILE=$CA_FILE holds no PEM certificate" "export the proxy's CA certificate in PEM (Base64) format"
@@ -425,8 +439,12 @@ stage_images() {
   for img in $(dc config --images | sort -u); do
     docker image inspect "$img" >/dev/null 2>&1 || missing=$((missing + 1))
   done
+  if [ "$missing" != 0 ] && [ "$rate_limited" = 1 ]; then
+    fail "$missing image(s) missing: Docker Hub's limit for downloads without an account was reached" \
+      "run docker login with a free Docker account (or wait a few hours), then run ./scripts/install.sh again"
+  fi
   [ "$missing" = 0 ] || fail "$missing image(s) missing (see FAIL above)" \
-    "make sure the Docker service can reach Docker Hub, codeberg.org and quay.io (proxy for the Docker service: see the guide), then run ./scripts/install.sh again"
+    "make sure the Docker service can reach Docker Hub, codeberg.org and quay.io (behind a web proxy: sudo ./scripts/prepare-server.sh ... --proxy <proxy URL>), then run ./scripts/install.sh again"
 }
 
 stage_start() {
@@ -777,7 +795,7 @@ stage_certs() {  # certs <fullchain.pem> <privkey.pem>, or certs internal
 }
 
 # ======================================================================= driver
-usage() { sed -n '3,23p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//'; }
 
 show_status() {
   step "Installation status ($KIT_DIR)"
