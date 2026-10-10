@@ -95,6 +95,11 @@ case "$os_id" in
 esac
 if [ -n "$TARGET_USER" ]; then ok "your account: $TARGET_USER (it joins the docker group)"
 else warn "running as root directly" "a personal account with sudo is safer; the platform works either way"; fi
+kit_owner=$(stat -c %U .)
+if [ "$kit_owner" != "${TARGET_USER:-root}" ]; then
+  warn "the kit folder $(pwd) belongs to '$kit_owner', but the installer will run as '${TARGET_USER:-root}' (it must own the folder)" \
+    "sudo chown -R ${TARGET_USER:-root}: $(pwd)"
+fi
 
 python3 - "$ADMIN_NETWORKS" "$POOL" "$TZ_NAME" "$PROXY" <<'PY' || fail "a setting is not valid (see above)" "correct it and run the command again"
 import ipaddress, os, re, sys
@@ -360,8 +365,9 @@ fi
 # ============================================================================== done
 step "Server ready"
 if [ "$NEED_RELOGIN" = 1 ]; then
-  info "Log out and log in again (your docker group membership applies to new log-ins), then:"
+  info "Log out and log in again as $TARGET_USER, so the docker group applies (with tmux, run tmux kill-server"
+  info "first: tmux keeps the groups it started with). Then, without sudo:"
 else
-  info "Next:"
+  info "Next, without sudo:"
 fi
 info "  cd $(pwd) && ./scripts/install.sh preflight"

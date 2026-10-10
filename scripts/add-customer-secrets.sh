@@ -15,6 +15,13 @@ if ! [[ "$code" =~ ^[a-z][a-z0-9-]{1,19}$ ]]; then
   exit 1
 fi
 dir=secrets/tenants/$code
+owner=$(stat -c %U .)
+if [ "$(id -un)" != "$owner" ]; then
+  echo "Run this without sudo, as $owner: the kit folder belongs to $owner." >&2
+  [ "${SUDO_USER:-}" = "$owner" ] ||
+    echo "To use this account instead, make it the owner first: sudo chown -R $(id -un): $(pwd)" >&2
+  exit 1
+fi
 
 ask() {  # ask VARIABLE "question" [hidden]
   local value=""

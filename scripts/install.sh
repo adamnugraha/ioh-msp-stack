@@ -22,6 +22,8 @@
 # Prepare the server first with: sudo ./scripts/prepare-server.sh --admin-networks "<NOC and VPN ranges>"
 # Behind a web proxy, prepare-server.sh --proxy (and --proxy-ca) sets everything up; by hand, export
 # HTTPS_PROXY before running and, for a proxy that inspects TLS, CA_FILE=/path/to/proxy-ca.crt.
+# Run this installer without sudo, from the account that owns the kit folder (root works too, if root
+# owns the folder). After prepare-server.sh, log out and in again so the docker group applies.
 # =============================================================================
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -69,6 +71,32 @@ on_exit() {  # any other error that stopped the script
   fi
 }
 trap on_exit EXIT
+
+# ---------------------------------------------------------------------------- account
+in_group() {  # in_group GROUP [USER]: with USER, that account's groups in the user database; without, this login's groups
+  local groups
+  if [ -n "${2:-}" ]; then groups=$(id -nG "$2" 2>/dev/null || true); else groups=$(id -nG 2>/dev/null || true); fi
+  case " $groups " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+}
+check_account() {  # one account runs the installer: the owner of the kit folder, without sudo
+  local me owner stray
+  me=$(id -un)
+  owner=$(stat -c %U "$KIT_DIR")
+  if [ "$me" != "$owner" ]; then
+    if [ "$me" = root ] && [ "${SUDO_USER:-}" = "$owner" ]; then
+      fail "the installer runs without sudo, as $owner (files made with sudo would belong to root and lock $owner out)" \
+        "leave out sudo (in a root shell from sudo -i or sudo su, type exit first). If Docker then says permission denied, log out and log in again (with tmux, run tmux kill-server first)"
+    fi
+    fail "the kit folder $KIT_DIR belongs to '$owner', but this login is '$me'" \
+      "log in as $owner and run the command there, or make '$me' the owner: sudo chown -R $me: $KIT_DIR"
+  fi
+  # lab/ is left out: the lab's Grafana container writes into lab/grafana-plugins as its own user.
+  stray=$(find "$KIT_DIR" -xdev -path "$KIT_DIR/lab" -prune -o ! -user "$me" -print -quit 2>/dev/null || true)
+  if [ -n "$stray" ]; then
+    fail "${stray#"$KIT_DIR"/} belongs to another account (an earlier run with sudo, or files copied in as root)" \
+      "make '$me' the owner of everything in the kit folder: sudo chown -R $me: $KIT_DIR"
+  fi
+}
 
 # ------------------------------------------------------------------------------ state
 is_done()   { [ -f "$STATE_FILE" ] && cut -f1 "$STATE_FILE" | grep -qx -- "$1"; }
@@ -178,7 +206,15 @@ stage_preflight() {
   if ! command -v docker >/dev/null; then
     bad "Docker is not installed" "sudo ./scripts/prepare-server.sh --admin-networks \"<NOC and VPN ranges>\" (installs and sets up Docker)"
   elif ! docker info >/dev/null 2>&1; then
-    bad "Docker is installed, but user '$(id -un)' cannot use it" "sudo usermod -aG docker $(id -un), then log out and in again"
+    if [ "$(id -u)" != 0 ] && ! in_group docker "$(id -un)"; then
+      bad "Docker is installed, but user '$(id -un)' cannot use it" "sudo usermod -aG docker $(id -un), then log out and log in again"
+    elif [ "$(id -u)" != 0 ] && ! in_group docker; then
+      bad "user '$(id -un)' joined the docker group after this login started, so the group does not apply yet" \
+        "log out and log in again (close the terminal or SSH session and open a new one; with tmux, run tmux kill-server first). Do not use sudo for the installer"
+    else
+      bad "Docker is installed, but does not answer: $(docker info 2>&1 >/dev/null | grep -v '^$' | tail -n 1 | cut -c1-200)" \
+        "sudo systemctl restart docker; if that fails, sudo journalctl -u docker --no-pager | tail -n 20 shows why"
+    fi
   else
     ok "Docker Engine $(docker version -f '{{.Server.Version}}' 2>/dev/null)"
     v=$(docker compose version --short 2>/dev/null | sed 's/^v//' || true)
@@ -795,7 +831,7 @@ stage_certs() {  # certs <fullchain.pem> <privkey.pem>, or certs internal
 }
 
 # ======================================================================= driver
-usage() { sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,26p' "$0" | sed 's/^# \{0,1\}//'; }
 
 show_status() {
   step "Installation status ($KIT_DIR)"
@@ -836,13 +872,14 @@ run_all() {
 }
 
 main() {
+  case "${1:-}" in help | -h | --help) usage; return 0 ;; esac
+  RUN_CMD="./scripts/install.sh${*:+ $*}"
+  check_account
   touch "$LOG_FILE" && chmod 600 "$LOG_FILE"
   exec > >(tee -a "$LOG_FILE") 2>&1
   printf '\n%s ./scripts/install.sh %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
-  RUN_CMD="./scripts/install.sh${*:+ $*}"
   local cmd=${1:-all}
   case "$cmd" in
-    help | -h | --help) usage ;;
     status) show_status ;;
     all) run_all ;;
     preflight | settings | network | images | start | glpi-api | forgejo-admin | tokens | platform | glue | harden | check | proxy | grafana)

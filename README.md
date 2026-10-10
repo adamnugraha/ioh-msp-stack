@@ -79,7 +79,7 @@ Each version of the kit is published as a zip in the `dist` folder of this repos
 SHA-256 checksum in `dist/SHA256SUMS`. On the server (`wget -O` works the same as `curl -o`):
 
 ```bash
-curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.0.1.zip
+curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.0.2.zip
 sha256sum /tmp/ioh-msp-stack.zip      # must equal the line for this file in dist/SHA256SUMS
 command -v unzip >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y unzip)
 sudo mkdir -p /opt/ioh-msp-stack && sudo chown "$(id -un):" /opt/ioh-msp-stack
@@ -90,16 +90,21 @@ cp -a /tmp/kit/*/. /opt/ioh-msp-stack/ && chmod +x /opt/ioh-msp-stack/scripts/*.
 `git clone https://github.com/adamnugraha/ioh-msp-stack /opt/ioh-msp-stack` gets the same files
 with git instead.
 
+Use one account for every step, from unpacking onwards: a personal account with sudo rights
+(recommended) or root. The installer runs as the owner of the kit folder, without sudo, and stops
+with the fix when it is started another way. Only `prepare-server.sh` and `backup.sh` need sudo.
+
 Prepare the server once: Ubuntu updates, Docker with Compose, Docker's address pool and log
 rotation, and the firewall (add `--proxy` and `--proxy-ca` behind IOH's web proxy). Then log out
-and in again, so your account's docker group membership applies:
+and in again, so your account's docker group membership applies (with tmux, run
+`tmux kill-server` first, because tmux keeps the groups it started with):
 
 ```bash
 cd /opt/ioh-msp-stack
 sudo ./scripts/prepare-server.sh --admin-networks "10.10.0.0/16 10.20.0.0/16" --pool 172.31.0.0/16 --tz Asia/Jakarta
 ```
 
-Then, from `/opt/ioh-msp-stack`:
+Then, from `/opt/ioh-msp-stack` and without sudo:
 
 ```bash
 ./scripts/install.sh preflight                     # check the server; changes nothing
