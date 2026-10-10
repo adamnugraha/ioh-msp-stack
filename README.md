@@ -75,14 +75,19 @@ and when something is wrong stops with the reason, the fix and the command that 
 the fix. The interactive installation guide "IOH MSP Platform Install" walks through every command,
 from an empty server to the first customer, with your own values filled in.
 
-The kit is published as `ioh-msp-stack.zip` on the Releases page of its repository. On the server:
+Each version of the kit is published as a zip in the `dist` folder of this repository, with its
+SHA-256 checksum in `dist/SHA256SUMS`. On the server (`wget -O` works the same as `curl -o`):
 
 ```bash
-curl -fL -o /tmp/ioh-msp-stack.zip https://github.com/<account>/ioh-msp-stack/releases/download/v1.0.0/ioh-msp-stack.zip
+curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.0.0.zip
+sha256sum /tmp/ioh-msp-stack.zip      # must equal the line for this file in dist/SHA256SUMS
 sudo mkdir -p /opt/ioh-msp-stack && sudo chown $USER: /opt/ioh-msp-stack
 rm -rf /tmp/kit && mkdir /tmp/kit && unzip -q /tmp/ioh-msp-stack.zip -d /tmp/kit
 cp -a /tmp/kit/*/. /opt/ioh-msp-stack/ && chmod +x /opt/ioh-msp-stack/scripts/*.sh
 ```
+
+`git clone https://github.com/adamnugraha/ioh-msp-stack /opt/ioh-msp-stack` gets the same files
+with git instead.
 
 Then, from `/opt/ioh-msp-stack`:
 
@@ -108,8 +113,8 @@ certificate and puts the previous certificates back if not. The choice is kept i
 (`CADDY_TLS`), so kit updates never undo it. `./scripts/install.sh certs internal` goes back to
 Caddy's own certificate authority.
 
-To update the kit later: back up, download the new release zip, unzip it over the folder the same
-way (your `.env`, secrets and certificates are not in the zip, so they stay), then run
+To update the kit later: back up, download the new version's zip from `dist`, unzip it over the
+folder the same way (your `.env`, secrets and certificates are not in the zip, so they stay), then run
 `./scripts/install.sh images`, `docker compose up -d` and `./scripts/install.sh check`.
 
 The guide's build tab lists the same work as manual steps, for anyone who wants to see or repeat a
