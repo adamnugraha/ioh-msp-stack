@@ -1,0 +1,16 @@
+{# Open tickets table body. Needs: tickets, show_customer #}
+<tbody id="tickets-body" data-live>
+{% for t in tickets %}
+<tr>
+  <td><a href="{{ t.link }}" target="_blank" rel="noopener">#{{ t.id }}</a></td>
+  {% if show_customer %}<td>{% if t.customer %}<a href="/customers/{{ t.customer }}">{{ customers.get(t.customer, t.customer) }}</a>{% endif %}</td>{% endif %}
+  <td>{{ t.name }}<small>{{ t.type }}{% if t.group %} · {{ t.group }}{% endif %}{% if t.technician %} · {{ t.technician }}{% endif %}</small></td>
+  <td><span class="prio prio-{{ t.priority }}">{{ t.priority_name }}</span></td>
+  <td>{{ t.status }}</td>
+  <td title="Opened {{ t.opened|when(true) }}">{{ t.opened|ago }}</td>
+  <td>{% if t.due %}{% if t.late %}<span class="pill bad" title="Due {{ t.due|when(true) }}">late, due {{ t.due|ago }}</span>{% else %}<span title="Due {{ t.due|when(true) }}">{{ t.due|ago }}</span>{% endif %}{% endif %}</td>
+</tr>
+{% else %}
+<tr class="empty"><td colspan="7">No open tickets.</td></tr>
+{% endfor %}
+</tbody>

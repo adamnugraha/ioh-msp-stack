@@ -4,3 +4,6 @@ services:
   msp-glue:
     volumes:
       - ./glue/msp_glue:/usr/local/lib/python3.12/site-packages/msp_glue:ro
+  msp-console:
+    volumes:
+      - ./glue/msp_glue:/usr/local/lib/python3.12/site-packages/msp_glue:ro

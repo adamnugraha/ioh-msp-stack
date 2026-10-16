@@ -14,6 +14,9 @@
 # Later stages, when you are ready for them:
 #   proxy     HTTPS for every tool on https://<tool>.<domain> through Caddy (needs the DNS names)
 #   grafana   customer dashboards (phase 3 of the build plan)
+#   sso [--admin-email <e-mail> --name "<full name>"]   Keycloak sign-in for staff, first administrator
+#   console   the MSP Console on https://console.<domain> (needs sso)
+#   chat telegram|teams|email|test|off   problems on managed devices to the NOC chat (Versus Incident)
 #   certs <fullchain.pem> <privkey.pem>   use IOH certificates instead of Caddy's own (certs internal: back)
 #
 # Every stage can run again safely. A failed stage stops with the reason, the fix and the command
@@ -31,9 +34,9 @@ KIT_DIR=$(pwd)
 STATE_FILE=.install-state
 LOG_FILE=install.log
 CORE_STAGES=(preflight settings network images start glpi-api forgejo-admin tokens platform glue harden check)
-ALL_STAGES=("${CORE_STAGES[@]}" proxy grafana)
+ALL_STAGES=("${CORE_STAGES[@]}" proxy grafana sso console chat)
 NAUTOBOT_TAG=msp/nautobot:3.2.6-gc3.0.8
-GLUE_TAG=msp/glue:1.0
+GLUE_TAG=msp/glue:1.1
 GRAFANA_PLUGIN_VERSION=6.8.0
 
 # ----------------------------------------------------------------------------- output
@@ -109,7 +112,13 @@ set_env() {  # set_env KEY VALUE: replace or add KEY=VALUE in .env (values with 
   python3 - "$1" "$2" <<'PY'
 import pathlib, sys
 key, value = sys.argv[1], sys.argv[2]
-if any(c in value for c in " \t#"):
+if any(c in value for c in "&;|<>()$`\\\"*?!{}[]~'"):
+    # Characters the shell would act on (a Teams address has & in it): single quotes keep them literal
+    # for bash and for docker compose alike.
+    if "'" in value:
+        sys.exit(f"the value for {key} contains a ' character, which .env cannot hold")
+    value = "'" + value + "'"
+elif any(c in value for c in " \t#"):
     value = '"' + value + '"'
 path = pathlib.Path(".env")
 lines = path.read_text().splitlines()
@@ -128,6 +137,25 @@ add_profile() {  # add_profile NAME: switch an optional component on (COMPOSE_PR
   case ",$current," in *",$1,"*) return 0 ;; esac
   set_env COMPOSE_PROFILES "${current:+$current,}$1"
   load_env
+}
+
+remove_profile() {  # remove_profile NAME: switch an optional component off again
+  load_env
+  local kept
+  kept=$(printf '%s' "${COMPOSE_PROFILES:-}" | tr ',' '\n' | grep -vx -- "$1" | paste -sd, - || true)
+  set_env COMPOSE_PROFILES "$kept"
+  load_env
+}
+random_secret() { openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c "${1:-40}"; }
+ensure_secret() {  # ensure_secret KEY [LENGTH]: put a random value in .env when KEY is missing or empty
+  load_env
+  if [ -z "${!1:-}" ]; then set_env "$1" "$(random_secret "${2:-40}")"; load_env; fi
+}
+caddy_reload() {  # pick up a changed Caddyfile without dropping open connections
+  dc exec -T proxy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || dc restart proxy >/dev/null
+}
+https_code() {  # https_code NAME PATH: HTTP status of https://NAME/PATH through Caddy on this server
+  curl -sk --noproxy '*' -o /dev/null -m 20 -w '%{http_code}' --resolve "$1:443:127.0.0.1" "https://$1$2" || true
 }
 
 # ---------------------------------------------------------------------- docker helpers
@@ -254,10 +282,11 @@ stage_preflight() {
     if reaches "$host"; then ok "reaches $host"
     else bad "cannot reach https://$host" "allow HTTPS to it in the firewall, or export HTTPS_PROXY=http://<proxy>:<port>"; fi
   done
-  # Needed later: grafana.com for customer dashboards, quay.io for single sign-on (both phase 3).
-  for host in grafana.com quay.io; do
+  # Needed later: grafana.com for customer dashboards, quay.io for single sign-on (Keycloak), ghcr.io for
+  # chat alerts (Versus Incident; its image layers come from pkg-containers.githubusercontent.com).
+  for host in grafana.com quay.io ghcr.io pkg-containers.githubusercontent.com; do
     if reaches "$host"; then ok "reaches $host"
-    else warn "cannot reach https://$host (only needed in phase 3)" "allow HTTPS to it before you switch on dashboards or single sign-on"; fi
+    else warn "cannot reach https://$host (only needed for the later stages)" "allow HTTPS to it before you switch on dashboards, single sign-on or chat alerts"; fi
   done
 
   # The platform range from .env once it exists; before that, MSP_SUBNET=<range> on the command line, or the default.
@@ -662,9 +691,11 @@ stage_proxy() {
   wait_for "Caddy" 120 "docker compose logs --tail 50 proxy" health_is proxy running
   sleep 3
   local t code url
-  for t in glpi nautobot zabbix semaphore git glue; do
+  local names="glpi nautobot zabbix semaphore git glue"
+  [[ ",${COMPOSE_PROFILES:-}," == *,console,* ]] && names="$names console"
+  for t in $names; do
     url="https://$t.$MSP_DOMAIN/"
-    [ "$t" = glue ] && url="${url}healthz"
+    [ "$t" = glue ] || [ "$t" = console ] && url="${url}healthz"
     code=$(curl -sk --noproxy '*' -o /dev/null -m 20 -w '%{http_code}' --resolve "$t.$MSP_DOMAIN:443:127.0.0.1" "$url" || true)
     case "$code" in
       2* | 3*) ok "$url answers ($code)" ;;
@@ -729,6 +760,269 @@ except Exception as e:
   ok "Grafana is on; every customer has its own organisation (https://grafana.$MSP_DOMAIN once the proxy runs)"
 }
 
+stage_sso() {  # sso [--admin-email <e-mail> --name "<full name>"]
+  step "Single sign-on for staff (Keycloak, realm msp)"
+  load_env
+  local admin="" name="" out code key
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --admin-email) admin=${2:-}; shift 2 ;;
+      --name) name=${2:-}; shift 2 ;;
+      *) fail "unknown option '$1' for sso" "./scripts/install.sh sso --admin-email <your e-mail> --name \"<your full name>\"" ;;
+    esac
+  done
+  [ "${MSP_DOMAIN:-msp.example.internal}" != msp.example.internal ] || fail "MSP_DOMAIN is still the example" "./scripts/install.sh settings --domain <your domain>"
+  docker image inspect "$GLUE_TAG" >/dev/null 2>&1 || fail "the msp-glue image $GLUE_TAG is missing (new kit version)" "./scripts/install.sh images"
+  for key in KEYCLOAK_ADMIN_PASSWORD KEYCLOAK_DB_PASSWORD KEYCLOAK_CONSOLE_CLIENT_SECRET KEYCLOAK_GLUE_CLIENT_SECRET CONSOLE_SESSION_SECRET; do
+    ensure_secret "$key"
+  done
+  ok "Keycloak passwords and client secrets are in .env"
+
+  # Keycloak's database is made when PostgreSQL starts for the first time. On a server that started
+  # before, create it now; either way its password follows .env.
+  export KC_DB_PW=$KEYCLOAK_DB_PASSWORD
+  dc exec -T -e KC_DB_PW postgres sh -c 'psql -U postgres -v ON_ERROR_STOP=1 -q -v pw="$KC_DB_PW" -f -' >/dev/null <<'SQL' ||
+SELECT format('CREATE ROLE keycloak LOGIN PASSWORD %L', :'pw') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'keycloak')
+\gexec
+ALTER ROLE keycloak WITH LOGIN PASSWORD :'pw';
+SELECT 'CREATE DATABASE keycloak OWNER keycloak ENCODING ''UTF8''' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'keycloak')
+\gexec
+SQL
+    fail "could not prepare Keycloak's database in PostgreSQL" "docker compose logs --tail 30 postgres"
+  unset KC_DB_PW
+  ok "database keycloak ready"
+
+  add_profile sso
+  docker pull -q "$KEYCLOAK_IMAGE" >/dev/null 2>&1 || docker image inspect "$KEYCLOAK_IMAGE" >/dev/null 2>&1 ||
+    fail "the Keycloak image $KEYCLOAK_IMAGE could not be downloaded" \
+      "the Docker service needs HTTPS access to quay.io (behind a web proxy: sudo ./scripts/prepare-server.sh ... --proxy <proxy URL>)"
+  dc_up keycloak || fail "Keycloak did not start" "docker compose logs --tail 50 keycloak"
+  wait_for "Keycloak (the first start takes 1 to 3 minutes)" 600 "docker compose logs --tail 50 keycloak" health_is keycloak healthy
+
+  export KEYCLOAK_ADMIN_PASSWORD
+  if ! out=$(dc run --rm --no-deps -e KEYCLOAK_ADMIN_PASSWORD msp-glue mspctl sso setup 2>&1); then
+    printf '%s\n' "$out" | tail -n 10
+    fail "the realm msp could not be set up in Keycloak" \
+      "if you changed Keycloak's admin password by hand, write it into KEYCLOAK_ADMIN_PASSWORD in .env; then ./scripts/install.sh sso"
+  fi
+  ok "realm msp: roles msp-manager, msp-engineer, msp-automation and the MSP Console's client"
+  # msp-glue manages staff accounts with its own client secret, read when it starts.
+  dc_up msp-glue || fail "msp-glue did not restart" "docker compose logs --tail 50 msp-glue"
+  wait_for "msp-glue" 300 "docker compose logs --tail 50 msp-glue" health_is msp-glue healthy
+
+  if is_done proxy; then
+    caddy_reload
+    sleep 2
+    code=$(https_code "sso.$MSP_DOMAIN" /realms/msp/.well-known/openid-configuration)
+    case "$code" in
+      200) ok "https://sso.$MSP_DOMAIN answers" ;;
+      *) warn "https://sso.$MSP_DOMAIN gave '$code'" "docker compose logs --tail 30 proxy keycloak" ;;
+    esac
+  fi
+  if [ -n "$admin" ]; then
+    local add=(mspctl staff add "$admin" --role admin)
+    [ -n "$name" ] && add+=(--name "$name")
+    out=$(dc exec -T msp-glue "${add[@]}" 2>&1) || {
+      printf '%s\n' "$out" | tail -n 5
+      fail "the first administrator was not created" "check the e-mail address, then ./scripts/install.sh sso --admin-email <e-mail>"
+    }
+    printf '%s\n' "$out" | grep -Ev '^[0-9]{4}-[0-9]{2}-[0-9]{2} |^[[:space:]]*$' | sed 's/^/         /'
+  fi
+  info "More staff: docker compose exec msp-glue mspctl staff add <e-mail> --name \"<full name>\" --role engineer"
+  info "Roles: manager (service view), engineer (operations and actions), automation (engineer plus playbooks), admin (all three)"
+  info "Next: ./scripts/install.sh console"
+}
+
+stage_console() {
+  step "MSP Console"
+  load_env
+  docker image inspect "$GLUE_TAG" >/dev/null 2>&1 || fail "the msp-glue image $GLUE_TAG is missing (new kit version)" "./scripts/install.sh images"
+  health_is keycloak healthy || fail "single sign-on (Keycloak) is not running" "./scripts/install.sh sso"
+  [ -n "${KEYCLOAK_CONSOLE_CLIENT_SECRET:-}" ] || fail "KEYCLOAK_CONSOLE_CLIENT_SECRET is empty in .env" "./scripts/install.sh sso"
+  ensure_secret CONSOLE_SESSION_SECRET 48
+  health_is msp-glue healthy || fail "msp-glue is not running" "./scripts/install.sh glue"
+  dc exec -T msp-glue mspctl bootstrap console >/dev/null 2>&1 ||
+    warn "Zabbix: svc-msp-glue could not join the NOC group, so GLPI follow-ups of console acknowledgements name 'Inaccessible user'" \
+      "./scripts/install.sh platform, then ./scripts/install.sh console"
+  add_profile console
+  dc_up msp-console || fail "the MSP Console did not start" "docker compose logs --tail 50 msp-console"
+  wait_for "the MSP Console" 180 "docker compose logs --tail 50 msp-console" health_is msp-console healthy
+  ok "msp-console is running"
+  if is_done proxy; then
+    caddy_reload
+    sleep 2
+    local code where
+    code=$(https_code "console.$MSP_DOMAIN" /healthz)
+    case "$code" in
+      200) ok "https://console.$MSP_DOMAIN answers" ;;
+      403) ok "https://console.$MSP_DOMAIN answers (403 here: this server is outside ADMIN_NETWORKS, as intended)" ;;
+      *) fail "https://console.$MSP_DOMAIN gave '$code'" "docker compose logs --tail 30 proxy msp-console" ;;
+    esac
+    if [ "$code" = 200 ]; then
+      where=$(curl -sk --noproxy '*' -o /dev/null -m 20 -w '%{redirect_url}' --resolve "console.$MSP_DOMAIN:443:127.0.0.1" \
+        "https://console.$MSP_DOMAIN/auth/login" || true)
+      case "$where" in
+        "https://sso.$MSP_DOMAIN/"*) ok "sign-in goes to https://sso.$MSP_DOMAIN" ;;
+        *) warn "sign-in did not lead to Keycloak (answer: '${where:-none}')" "docker compose logs --tail 30 msp-console keycloak" ;;
+      esac
+    fi
+  else
+    warn "the reverse proxy is not on, so the console has no address yet" "./scripts/install.sh proxy"
+  fi
+  info "Open https://console.$MSP_DOMAIN and sign in with a staff account (./scripts/install.sh sso --admin-email <e-mail> makes the first)."
+  info "Browsers need console.$MSP_DOMAIN and sso.$MSP_DOMAIN in DNS (or as routes of the Cloudflare tunnel)."
+}
+
+ask() {  # ask VARIABLE "question" [hidden]: read an answer from the keyboard; Enter keeps the current value
+  local answer=""
+  [ -t 0 ] || return 0
+  if [ "${3:-}" = hidden ]; then
+    printf '  %s (typing is hidden%s): ' "$2" "${!1:+; Enter keeps the current one}"
+    IFS= read -rs answer
+    printf '\n'
+  else
+    printf '  %s%s: ' "$2" "${!1:+ [${!1}]}"
+    IFS= read -r answer
+  fi
+  [ -z "$answer" ] || printf -v "$1" '%s' "$answer"
+}
+
+chat_settings() {  # chat_settings telegram|teams|email: ask for the channel's details and write them to .env
+  case "$1" in
+    telegram)
+      local token=${CHAT_TELEGRAM_BOT_TOKEN:-} chat=${CHAT_TELEGRAM_CHAT_ID:-} reply seen
+      ask token "Telegram bot token from @BotFather" hidden
+      if [ -z "$chat" ] && [[ "$token" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]]; then
+        # Groups the bot has received a message in lately: their chat IDs, so nobody has to look them up.
+        seen=$(printf 'url = "https://api.telegram.org/bot%s/getUpdates"\n' "$token" | curl -s -m 20 -K - 2>/dev/null | python3 -c '
+import json, sys
+try:
+    updates = json.load(sys.stdin).get("result", [])
+except ValueError:
+    sys.exit(0)
+chats = {}
+for update in updates:
+    for kind in ("message", "edited_message", "channel_post", "my_chat_member"):
+        chat = (update.get(kind) or {}).get("chat") or {}
+        if chat.get("type") in ("group", "supergroup", "channel"):
+            chats[chat["id"]] = chat.get("title", "")
+for chat_id, title in chats.items():
+    print(f"{chat_id}  {title}")' || true)
+        if [ -n "$seen" ]; then
+          info "Groups the bot has seen (chat ID, then name):"
+          printf '%s\n' "$seen" | sed 's/^/           /'
+        else
+          info "The bot has not seen a group message yet: add it to the NOC group and send one message there first."
+        fi
+      fi
+      ask chat "Chat ID of the NOC group, for example -1001234567890"
+      [ -n "$token" ] && [ -n "$chat" ] || fail "both the bot token and the chat ID are needed" "./scripts/install.sh chat telegram (the guide shows where to find both)"
+      [[ "$token" =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]] || fail "that is not a bot token (digits, a colon, then about 35 letters and digits)" "copy it again from @BotFather: /mybots, your bot, API Token"
+      [[ "$chat" =~ ^-?[0-9]+$ || "$chat" =~ ^@[A-Za-z0-9_]{5,}$ ]] || fail "the chat ID is a number such as -1001234567890 (or @channelname for a public channel)" "the guide shows how to read it"
+      # Ask Telegram from this server whether the bot can see the chat (the token goes in a curl config, not the command line).
+      reply=$(printf 'url = "https://api.telegram.org/bot%s/getChat?chat_id=%s"\n' "$token" "$chat" | curl -s -m 20 -K - || true)
+      case "$reply" in
+        *'"ok":true'*) ok "Telegram knows the bot and the chat" ;;
+        *"chat not found"*) fail "Telegram says the chat was not found: the bot is not in the group yet, or the ID is wrong" "add the bot to the NOC group, send one message there, read the ID again (see the guide)" ;;
+        *Unauthorized* | *"Not Found"*) fail "Telegram does not accept the bot token" "copy it again from @BotFather: /mybots, your bot, API Token" ;;
+        "") fail "this server cannot reach api.telegram.org" "allow HTTPS to api.telegram.org in the firewall; behind a web proxy, export HTTPS_PROXY=http://<proxy>:<port> before running this" ;;
+        *) warn "unexpected answer from Telegram: ${reply:0:200}" ;;
+      esac
+      set_env CHAT_TELEGRAM_ENABLE true
+      set_env CHAT_TELEGRAM_BOT_TOKEN "$token"
+      set_env CHAT_TELEGRAM_CHAT_ID "$chat"
+      ;;
+    teams)
+      local url=${CHAT_MSTEAMS_URL:-}
+      ask url "Address of the Teams workflow (its trigger \"When a Teams webhook request is received\" shows it)" hidden
+      [[ "$url" == https://* ]] || fail "the workflow address starts with https://" "copy it from the workflow's trigger \"When a Teams webhook request is received\" (the guide shows how to build the workflow)"
+      set_env CHAT_MSTEAMS_ENABLE true
+      set_env CHAT_MSTEAMS_URL "$url"
+      ;;
+    email)
+      local host=${CHAT_SMTP_HOST:-} port=${CHAT_SMTP_PORT:-587} user=${CHAT_SMTP_USERNAME:-} pass=${CHAT_SMTP_PASSWORD:-} to=${CHAT_EMAIL_TO:-}
+      ask host "SMTP server, for example smtp.office365.com"
+      ask port "SMTP port (587 with STARTTLS)"
+      ask user "Sender account (its e-mail address)"
+      ask pass "Password of the sender account" hidden
+      ask to "Recipients, comma-separated, for example noc@ioh.co.id"
+      [ -n "$host" ] && [ -n "$user" ] && [ -n "$pass" ] && [ -n "$to" ] || fail "server, sender, password and recipients are all needed" "./scripts/install.sh chat email"
+      [[ "$port" =~ ^[0-9]+$ ]] || fail "the port is a number, usually 587" "./scripts/install.sh chat email"
+      set_env CHAT_EMAIL_ENABLE true
+      set_env CHAT_SMTP_HOST "$host"
+      set_env CHAT_SMTP_PORT "$port"
+      set_env CHAT_SMTP_USERNAME "$user"
+      set_env CHAT_SMTP_PASSWORD "$pass"
+      set_env CHAT_EMAIL_TO "$to"
+      ;;
+  esac
+  # Behind a web proxy, Versus needs it too for Telegram and Teams. A proxy on this server's loopback
+  # address (127.0.0.1) cannot be reached from a container.
+  local proxy=${HTTPS_PROXY:-${https_proxy:-}}
+  case "$proxy" in
+    "") ;;
+    *://127.* | *://localhost* | *://\[::1\]*)
+      warn "the web proxy $proxy listens on this server's loopback address, which containers cannot reach" \
+        "if Telegram or Teams need the proxy, put an address containers reach (this server's IP and the proxy port) in CHAT_PROXY_URL in .env, set CHAT_USE_PROXY=true, then ./scripts/install.sh chat test" ;;
+    *) set_env CHAT_USE_PROXY true
+       set_env CHAT_PROXY_URL "$proxy" ;;
+  esac
+  ok "chat settings for $1 written to .env"
+}
+
+stage_chat() {  # chat telegram|teams|email|test|off
+  local how=${1:-} out
+  step "Chat alerts for the NOC (Versus Incident)"
+  case "$how" in
+    telegram | teams | email | test | off) ;;
+    *) fail "say which channel: telegram, teams or email (or test, or off)" "./scripts/install.sh chat telegram" ;;
+  esac
+  load_env
+  health_is msp-glue healthy || fail "msp-glue is not running" "./scripts/install.sh glue"
+  if [ "$how" = off ]; then
+    dc exec -T msp-glue mspctl chat off 2>/dev/null | sed 's/^/         /' || true
+    dc stop versus-incident >/dev/null 2>&1 || true
+    remove_profile chat
+    ok "chat alerts are off; the settings stay in .env (./scripts/install.sh chat <channel> switches them on again)"
+    return 0
+  fi
+  if [ "$how" = test ]; then
+    [[ ",${COMPOSE_PROFILES:-}," == *,chat,* ]] || fail "chat alerts are off" "./scripts/install.sh chat telegram (or teams, or email)"
+    dc_up versus-incident || fail "Versus Incident did not start" "docker compose logs --tail 30 versus-incident"
+    wait_for "Versus Incident" 120 "docker compose logs --tail 30 versus-incident" health_is versus-incident healthy
+    chat_test
+    return 0
+  fi
+  chat_settings "$how"
+  load_env
+  ensure_secret VERSUS_GATEWAY_SECRET
+  add_profile chat
+  local image=${VERSUS_IMAGE:-ghcr.io/versuscontrol/versus-incident:v1.4.13}
+  docker pull -q "$image" >/dev/null 2>&1 || docker image inspect "$image" >/dev/null 2>&1 ||
+    fail "the Versus Incident image $image could not be downloaded" \
+      "the Docker service needs HTTPS access to ghcr.io and pkg-containers.githubusercontent.com (behind a web proxy: sudo ./scripts/prepare-server.sh ... --proxy <proxy URL>)"
+  dc_up versus-incident || fail "Versus Incident did not start" "docker compose logs --tail 30 versus-incident"
+  wait_for "Versus Incident" 120 "docker compose logs --tail 30 versus-incident" health_is versus-incident healthy
+  if ! out=$(dc exec -T msp-glue mspctl chat setup 2>&1); then
+    printf '%s\n' "$out" | tail -n 8
+    fail "Zabbix could not be set up for chat alerts" "read the error above; then ./scripts/install.sh chat test"
+  fi
+  printf '%s\n' "$out" | grep -Ev '^[0-9]{4}-[0-9]{2}-[0-9]{2} |^[[:space:]]*$' | sed 's/^/         /'
+  ok "Zabbix sends problems on managed devices to the chat (severity and delay: section chat of glue/mappings.yaml)"
+  chat_test
+}
+
+chat_test() {  # one test message through Versus to every channel that is switched on
+  local out
+  if out=$(dc exec -T msp-glue mspctl chat test 2>&1); then
+    ok "test message sent: it should be in the chat now"
+  else
+    printf '%s\n' "$out" | tail -n 4
+    fail "Versus could not deliver the test message" \
+      "the error above names the channel and its reason (a wrong token, chat ID, address or password); fix it with ./scripts/install.sh chat <channel>"
+  fi
+}
+
 proxy_serves() {  # proxy_serves FINGERPRINT NAME...: true when Caddy answers every NAME with that certificate
   local want=$1 t got waited=0
   shift
@@ -786,13 +1080,14 @@ stage_certs() {  # certs <fullchain.pem> <privkey.pem>, or certs internal
   if [ "$count" -ge 2 ]; then ok "$((count - 1)) intermediate certificate(s) included"
   else warn "the file holds only the server certificate" "if IOH's certificate authority uses an intermediate certificate, append it: cat server.pem intermediate.pem > fullchain.pem"; fi
 
-  # 2. Every name the proxy serves (Grafana and single sign-on only once they are on).
+  # 2. Every name the proxy serves (Grafana, single sign-on and the console only once they are on).
   local t
-  for t in glpi nautobot zabbix semaphore git glue grafana sso; do
+  for t in glpi nautobot zabbix semaphore git glue grafana sso console; do
     if openssl x509 -in "$chain" -noout -checkhost "$t.$MSP_DOMAIN" 2>/dev/null | grep -q 'does match'; then
       ok "covers $t.$MSP_DOMAIN"
     elif { [ "$t" = grafana ] && [[ ",${COMPOSE_PROFILES:-}," != *,grafana,* ]]; } ||
-         { [ "$t" = sso ] && [[ ",${COMPOSE_PROFILES:-}," != *,sso,* ]]; }; then
+         { [ "$t" = sso ] && [[ ",${COMPOSE_PROFILES:-}," != *,sso,* ]]; } ||
+         { [ "$t" = console ] && [[ ",${COMPOSE_PROFILES:-}," != *,console,* ]]; }; then
       warn "does not cover $t.$MSP_DOMAIN (needed once that component is on)" "a certificate for *.$MSP_DOMAIN covers every name"
     else
       bad "does not cover $t.$MSP_DOMAIN"
@@ -831,7 +1126,7 @@ stage_certs() {  # certs <fullchain.pem> <privkey.pem>, or certs internal
 }
 
 # ======================================================================= driver
-usage() { sed -n '3,26p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,29p' "$0" | sed 's/^# \{0,1\}//'; }
 
 show_status() {
   step "Installation status ($KIT_DIR)"
@@ -882,9 +1177,20 @@ main() {
   case "$cmd" in
     status) show_status ;;
     all) run_all ;;
-    preflight | settings | network | images | start | glpi-api | forgejo-admin | tokens | platform | glue | harden | check | proxy | grafana)
+    preflight | settings | network | images | start | glpi-api | forgejo-admin | tokens | platform | glue | harden | check | proxy | grafana | sso | console)
       shift
       run_stage "$cmd" "$@"
+      ;;
+    chat)
+      shift
+      if [ "${1:-}" = off ]; then
+        CURRENT_STAGE=chat
+        stage_chat off
+        unmark chat
+        CURRENT_STAGE=""
+      else
+        run_stage chat "$@"
+      fi
       ;;
     certs)
       # A switch rather than a stage: it is not recorded in .install-state, status shows the current choice.

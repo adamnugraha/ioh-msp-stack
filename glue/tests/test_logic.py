@@ -6,6 +6,7 @@ Run:  cd glue && python -m pytest -q
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -156,3 +157,32 @@ def test_dry_run_is_refused_outside_device_sync():
 
     with pytest.raises(SystemExit):
         cli.main(["--dry-run", "tenant", "sync", "acme"])
+
+
+def test_single_device_sync_keeps_every_device_in_the_inventory(monkeypatch):
+    """A webhook for one device used to shrink the customer's Ansible inventory to that device."""
+    from msp_glue import devices
+
+    rows = [{"id": "d1", "name": "rtr01"}, {"id": "d2", "name": "srv01"}]
+
+    class Nautobot:
+        def graphql(self, *args, **kwargs):
+            return {"devices": rows}
+
+    class Zabbix:
+        def managed_hosts(self):
+            return []
+
+    @contextmanager
+    def glpi():
+        yield object()
+
+    synced, pushed = [], []
+    monkeypatch.setattr(devices.clients, "nautobot", Nautobot)
+    monkeypatch.setattr(devices.clients, "zabbix", Zabbix)
+    monkeypatch.setattr(devices.clients, "glpi", glpi)
+    monkeypatch.setattr(devices, "_sync_device", lambda ctx, nb, device, host, report: synced.append(device["id"]))
+    monkeypatch.setattr(devices, "refresh_zabbix_permissions", lambda *a, **k: None)
+    monkeypatch.setattr(devices, "_push_inventory", lambda tenant, devs: pushed.append([d["id"] for d in devs]))
+    devices.sync_tenant(tenant(msp_glpi_entity_id=2, msp_zabbix_hostgroup_id="5"), only_device_id="d2")
+    assert synced == ["d2"] and pushed == [["d1", "d2"]]

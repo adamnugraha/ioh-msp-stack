@@ -1,0 +1,47 @@
+# Versus Incident (profile "chat"): chat alerts for the NOC.
+# Zabbix posts each problem on a managed device to http://versus-incident:3000/api/incidents
+# (webhook "Versus chat"); Versus sends it to Telegram, Microsoft Teams or e-mail.
+# Internal only: no published port and no reverse proxy site. Set up with ./scripts/install.sh chat.
+services:
+  versus-incident:
+    image: ${VERSUS_IMAGE:-ghcr.io/versuscontrol/versus-incident:v1.4.13}
+    profiles: [chat]
+    restart: unless-stopped
+    environment:
+      GATEWAY_SECRET: ${VERSUS_GATEWAY_SECRET:-}
+      TELEGRAM_ENABLE: ${CHAT_TELEGRAM_ENABLE:-false}
+      TELEGRAM_BOT_TOKEN: ${CHAT_TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${CHAT_TELEGRAM_CHAT_ID:-}
+      TELEGRAM_USE_PROXY: ${CHAT_USE_PROXY:-false}
+      PROXY_URL: ${CHAT_PROXY_URL:-}
+      MSTEAMS_ENABLE: ${CHAT_MSTEAMS_ENABLE:-false}
+      MSTEAMS_POWER_AUTOMATE_URL: ${CHAT_MSTEAMS_URL:-}
+      EMAIL_ENABLE: ${CHAT_EMAIL_ENABLE:-false}
+      SMTP_HOST: ${CHAT_SMTP_HOST:-}
+      SMTP_PORT: ${CHAT_SMTP_PORT:-587}
+      SMTP_USERNAME: ${CHAT_SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${CHAT_SMTP_PASSWORD:-}
+      EMAIL_TO: ${CHAT_EMAIL_TO:-}
+      EMAIL_SUBJECT: ${CHAT_EMAIL_SUBJECT:-IOH managed services alert}
+      TZ: ${TZ}
+    volumes:
+      - ./config.yaml:/app/config/config.yaml:ro
+      - ./templates/msp_telegram.tmpl:/app/config/msp_telegram.tmpl:ro
+      - ./templates/msp_msteams.tmpl:/app/config/msp_msteams.tmpl:ro
+      - ./templates/msp_email.tmpl:/app/config/msp_email.tmpl:ro
+      # History of sent alerts (Versus keeps the newest 1000)
+      - versus_data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks: [msp]
+
+volumes:
+  versus_data:
+
+networks:
+  msp:
+    external: true
+    name: msp

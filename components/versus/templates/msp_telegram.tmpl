@@ -1,0 +1,25 @@
+{{- /*
+  Telegram message for a Zabbix event on a managed device (fields sent by the Zabbix webhook
+  "Versus chat", see zabbix/media/versus_chat.js). Telegram reads it as HTML: only b, i, a and code
+  tags are used, and every value from Zabbix is escaped with "html".
+*/ -}}
+{{- $mark := "🔴" -}}
+{{- if eq .kind "resolved" }}{{ $mark = "✅" }}{{ else if eq .kind "update" }}{{ $mark = "💬" }}{{ else if lt .nseverity 4.0 }}{{ $mark = "🟠" }}{{ end -}}
+<b>{{ $mark }} {{ if eq .kind "resolved" }}Resolved{{ else if eq .kind "update" }}Update{{ else }}{{ .severity | html }}{{ end }}: {{ .problem | html }}</b>
+<b>Customer:</b> {{ .customer | html }}
+<b>Device:</b> {{ .device | html }}{{ if .address }} ({{ .address | html }}){{ end }}{{ if .site }}, {{ .site | html }}{{ end }}
+{{- if eq .kind "resolved" }}
+<b>Down for:</b> {{ .duration | html }}
+{{- else }}
+<b>Since:</b> {{ .started | html }}
+{{- end }}
+{{- if .opdata }}
+<b>Value:</b> {{ .opdata | html }}
+{{- end }}
+{{- if eq .kind "update" }}
+<b>{{ .update_user | html }}</b> {{ .update_action | html }}{{ if .update_message }}: <i>{{ .update_message | html }}</i>{{ end }}
+{{- end }}
+{{- if .ticket_id }}
+<b>Ticket:</b> <a href="{{ .ticket_url | html }}">GLPI #{{ .ticket_id | html }}</a>
+{{- end }}
+<a href="{{ .event_url | html }}">Zabbix event</a>{{ if .console_url }} · <a href="{{ .console_url | html }}">MSP Console</a>{{ end }}

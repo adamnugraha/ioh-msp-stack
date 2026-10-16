@@ -13,3 +13,5 @@ services:
     ports: ["8085:3000"]
   msp-glue:
     ports: ["8086:80"]
+  msp-console:
+    ports: ["8088:8000"]

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Build the importable Zabbix media type (YAML) from zabbix/media/glpi_msp.js.
+"""Build the importable Zabbix media types (YAML) from their JavaScript sources:
 
-Run after editing the JavaScript:  python3 scripts/build-mediatype.py
-Then import zabbix/media/media_glpi_msp.yaml in Zabbix (Alerts > Media types > Import),
-or let "mspctl bootstrap platform" import it.
+  zabbix/media/glpi_msp.js     -> media_glpi_msp.yaml     (webhook "GLPI MSP", imported by "mspctl bootstrap platform")
+  zabbix/media/versus_chat.js  -> media_versus_chat.yaml  (webhook "Versus chat", imported by "mspctl chat setup")
+
+Run after editing either script:  python3 scripts/build-mediatype.py
 """
 
 from pathlib import Path
@@ -103,4 +104,64 @@ export = {
 
 out = ROOT / "zabbix/media/media_glpi_msp.yaml"
 out.write_text(yaml.dump(export, sort_keys=False, allow_unicode=True, width=1000), encoding="utf-8")
+print(f"Wrote {out.relative_to(ROOT)}")
+
+# ----------------------------------------------------------------------------- Versus chat
+CHAT_PARAMETERS = {
+    "console_url": "",            # set by "mspctl chat setup" (https://console.<MSP_DOMAIN>)
+    "event_date": "{EVENT.DATE}",
+    "event_duration": "{EVENT.DURATION}",
+    "event_id": "{EVENT.ID}",
+    "event_name": "{EVENT.NAME}",
+    "event_nseverity": "{EVENT.NSEVERITY}",
+    "event_opdata": "{EVENT.OPDATA}",
+    "event_severity": "{EVENT.SEVERITY}",
+    "event_source": "{EVENT.SOURCE}",
+    "event_tags": "{EVENT.TAGSJSON}",
+    "event_time": "{EVENT.TIME}",
+    "event_update_status": "{EVENT.UPDATE.STATUS}",
+    "event_value": "{EVENT.VALUE}",
+    "glpi_public_url": "",        # set by "mspctl chat setup"
+    "glpi_ticket_id": "{EVENT.TAGS.__zbx_glpi_ticket_id}",
+    "host_ip": "{HOST.IP}",
+    "host_name": "{HOST.NAME}",
+    "http_proxy": "",
+    "trigger_id": "{TRIGGER.ID}",
+    "update_action": "{EVENT.UPDATE.ACTION}",
+    "update_message": "{EVENT.UPDATE.MESSAGE}",
+    "update_user": "{USER.FULLNAME}",
+    "versus_url": "http://versus-incident:3000/api/incidents",
+    "zabbix_url": "{$ZABBIX.URL}",
+}
+chat = {
+    "zabbix_export": {
+        "version": "7.0",
+        "media_types": [{
+            "name": "Versus chat",
+            "type": "WEBHOOK",
+            "parameters": [{"name": k, "value": v} if v != "" else {"name": k} for k, v in sorted(CHAT_PARAMETERS.items())],
+            "status": "DISABLED",
+            "attempts": "3",
+            "attempt_interval": "30s",
+            "timeout": "15s",
+            "script": Literal((ROOT / "zabbix/media/versus_chat.js").read_text(encoding="utf-8")),
+            "description": Literal(
+                "Posts problems, updates and recoveries on managed devices to Versus Incident, which sends them to\n"
+                "the NOC's Telegram group, Microsoft Teams channel or mailbox. Set up by ./scripts/install.sh chat.\n"
+                "Source: zabbix/media/versus_chat.js in the platform kit.\n"
+            ),
+            # The script builds its own message; these texts only show in Zabbix's own lists.
+            "message_templates": [
+                {"event_source": "TRIGGERS", "operation_mode": "PROBLEM", "subject": "Problem: {EVENT.NAME}",
+                 "message": "{EVENT.SEVERITY} problem on {HOST.NAME} since {EVENT.DATE} {EVENT.TIME}: {EVENT.NAME}"},
+                {"event_source": "TRIGGERS", "operation_mode": "RECOVERY", "subject": "Resolved: {EVENT.NAME}",
+                 "message": "Resolved after {EVENT.DURATION}: {EVENT.NAME} on {HOST.NAME}"},
+                {"event_source": "TRIGGERS", "operation_mode": "UPDATE", "subject": "Updated: {EVENT.NAME}",
+                 "message": "{USER.FULLNAME} {EVENT.UPDATE.ACTION} the problem: {EVENT.UPDATE.MESSAGE}"},
+            ],
+        }],
+    }
+}
+out = ROOT / "zabbix/media/media_versus_chat.yaml"
+out.write_text(yaml.dump(chat, sort_keys=False, allow_unicode=True, width=1000), encoding="utf-8")
 print(f"Wrote {out.relative_to(ROOT)}")

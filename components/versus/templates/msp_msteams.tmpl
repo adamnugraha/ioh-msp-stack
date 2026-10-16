@@ -1,0 +1,15 @@
+{{- /*
+  Microsoft Teams message (Markdown, posted through a Power Automate "When a Teams webhook request
+  is received" flow) for a Zabbix event on a managed device. Fields: see zabbix/media/versus_chat.js.
+*/ -}}
+{{- $mark := "🔴" -}}
+{{- if eq .kind "resolved" }}{{ $mark = "✅" }}{{ else if eq .kind "update" }}{{ $mark = "💬" }}{{ else if lt .nseverity 4.0 }}{{ $mark = "🟠" }}{{ end -}}
+**{{ $mark }} {{ if eq .kind "resolved" }}Resolved{{ else if eq .kind "update" }}Update{{ else }}{{ .severity }}{{ end }}: {{ .problem }}**{{ "\n\n" }}
+**Customer:** {{ .customer }}{{ "\n\n" }}
+**Device:** {{ .device }}{{ if .address }} ({{ .address }}){{ end }}{{ if .site }}, {{ .site }}{{ end }}{{ "\n\n" }}
+{{- if eq .kind "resolved" }}**Down for:** {{ .duration }}{{ "\n\n" }}{{ else }}**Since:** {{ .started }}{{ "\n\n" }}{{ end }}
+{{- if .opdata }}**Value:** {{ .opdata }}{{ "\n\n" }}{{ end }}
+{{- if eq .kind "update" }}**{{ .update_user }}** {{ .update_action }}{{ if .update_message }}: _{{ .update_message }}_{{ end }}{{ "\n\n" }}{{ end }}
+{{- /* One link per line: Teams turns a line with a link into a clickable block, one link each. */ -}}
+{{- if .ticket_id }}[GLPI ticket #{{ .ticket_id }}]({{ .ticket_url }}){{ "\n\n" }}{{ end }}
+[Zabbix event]({{ .event_url }}){{ if .console_url }}{{ "\n\n" }}[MSP Console]({{ .console_url }}){{ end }}

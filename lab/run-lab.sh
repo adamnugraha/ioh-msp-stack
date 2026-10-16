@@ -57,6 +57,14 @@ set -a; . ./.env; set +a
 # route to it would hide those devices. The lab checks also need it to give a device its address back.
 docker network inspect msp >/dev/null 2>&1 || docker network create --subnet "${MSP_SUBNET:-172.30.0.0/24}" msp >/dev/null
 mkdir -p secrets/platform secrets/tenants
+# Fixed addresses for the lab devices and the edge collector (.201 to .204 of the platform network).
+lab_ip() { python3 -c 'import ipaddress, sys; print(ipaddress.ip_network(sys.argv[1]).network_address + int(sys.argv[2]))' \
+  "$(docker network inspect msp -f '{{(index .IPAM.Config 0).Subnet}}')" "$1"; }
+LAB_IP_ACME_RTR01=$(lab_ip 201)
+LAB_IP_ACME_SRV01=$(lab_ip 202)
+LAB_IP_BANKX_RTR01=$(lab_ip 203)
+LAB_IP_BANKX_PROXY=$(lab_ip 204)
+export LAB_IP_ACME_RTR01 LAB_IP_ACME_SRV01 LAB_IP_BANKX_RTR01 LAB_IP_BANKX_PROXY
 
 step "Building images"
 BUILD=(docker build -q)

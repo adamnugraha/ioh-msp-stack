@@ -4,6 +4,7 @@
   mspctl bootstrap tokens ...           create service accounts and print API tokens
   mspctl bootstrap platform             create the shared baseline in every tool
   mspctl bootstrap harden               replace default admin passwords, disable GLPI demo accounts
+  mspctl bootstrap console              what the MSP Console needs in the tools (run by install.sh console)
   mspctl tenant list                    list managed customers and their provisioning status
   mspctl tenant sync <code>|--all       provision or repair customers
   mspctl device sync [<code>]           sync devices to Zabbix and GLPI (all customers by default)
@@ -12,7 +13,13 @@
   mspctl user add <code> <login> ...    create a customer portal user (GLPI, and Grafana with --grafana)
   mspctl user disable <code> <login>    remove a customer user's access
   mspctl compliance                     open, update or solve configuration-drift tickets
+  mspctl sso setup                      create or repair the Keycloak realm "msp" (needs KEYCLOAK_ADMIN_PASSWORD)
+  mspctl staff add <email> --role ...   staff account for the MSP Console: manager, engineer, automation or admin
+  mspctl staff roles <email> --role ... set exactly these roles (removes the others)
+  mspctl staff list | reset <email> | disable <email>
+  mspctl chat setup | off | test        chat alerts through Versus Incident (Telegram, Teams or e-mail)
   mspctl serve                          run the webhook receiver and scheduler (container default)
+  mspctl console                        run the MSP Console web interface (msp-console container)
 """
 
 from __future__ import annotations
@@ -23,7 +30,8 @@ import os
 import secrets
 import sys
 
-from . import bootstrap, clients, compliance, customers, devices, tenants
+from . import bootstrap, chat, clients, compliance, customers, devices, tenants
+from .http import APIError
 from .locking import exclusive
 from .settings import settings
 
@@ -75,7 +83,23 @@ def cmd_bootstrap(args) -> int:
         for key, value in result.items():
             print(f"{key:<16} {value}")
         return 0
+    if args.stage == "console":
+        bootstrap.ensure_glue_user_in_noc(clients.zabbix())
+        print("Zabbix: svc-msp-glue is in the NOC user group (names show in GLPI follow-ups)")
+        return 0
     bootstrap.platform(webhook_token=args.webhook_token)
+    return 0
+
+
+def cmd_chat(args) -> int:
+    if args.action == "setup":
+        result = chat.setup()
+    elif args.action == "off":
+        result = chat.off()
+    else:
+        result = {"Versus": chat.test()}
+    for key, value in result.items():
+        print(f"{key:<14} {value}")
     return 0
 
 
@@ -172,9 +196,55 @@ def cmd_compliance(_args) -> int:
     return 0
 
 
+def cmd_sso(_args) -> int:
+    from . import sso
+    password = os.environ.get("KEYCLOAK_ADMIN_PASSWORD", "")
+    if not password:
+        print("Set KEYCLOAK_ADMIN_PASSWORD (docker compose run -e KEYCLOAK_ADMIN_PASSWORD msp-glue mspctl sso setup)")
+        return 1
+    for key, value in sso.setup(password).items():
+        print(f"  {key:<8} {value}")
+    return 0
+
+
+def cmd_staff(args) -> int:
+    from . import sso
+    if args.action == "list":
+        rows = sso.list_staff()
+        print(f"{'LOG-IN':<36} {'ENABLED':<8} {'NAME':<26} GROUPS")
+        for row in rows:
+            print(f"{row['login']:<36} {'yes' if row['enabled'] else 'no':<8} {row['name'][:25]:<26} {row['groups']}")
+        return 0
+    if not args.email:
+        print("Name the staff member's e-mail address, for example: mspctl staff add budi@ioh.co.id --role engineer")
+        return 1
+    roles = [r.strip() for value in (args.role or []) for r in value.split(",") if r.strip()]
+    if args.action == "add":
+        result = sso.add_staff(args.email, full_name=args.name, roles=roles or ["engineer"], otp=args.otp)
+    elif args.action == "roles":
+        result = sso.set_staff_roles(args.email, roles)
+    elif args.action == "reset":
+        result = sso.reset_staff(args.email)
+    else:
+        result = sso.disable_staff(args.email)
+    for key, value in result.items():
+        print(f"{key:<8} {value}")
+    if "one-time password" in str(result.get("account", "")):
+        print("\nSend the one-time password through a secure channel; Keycloak asks for a new one at first log-in.")
+    return 0
+
+
 def cmd_serve(args) -> int:
     import uvicorn
     uvicorn.run("msp_glue.server:app", host="0.0.0.0", port=args.port, log_level="info")
+    return 0
+
+
+def cmd_console(args) -> int:
+    import uvicorn
+    # Only Caddy reaches the console (it has no published port), so the forwarded headers it sets are trusted.
+    uvicorn.run("msp_glue.console.app:app", host="0.0.0.0", port=args.port, log_level="info",
+                proxy_headers=True, forwarded_allow_ips="*", access_log=False)
     return 0
 
 
@@ -189,7 +259,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("check")
 
     b = sub.add_parser("bootstrap")
-    b.add_argument("stage", choices=["tokens", "platform", "harden"])
+    b.add_argument("stage", choices=["tokens", "platform", "harden", "console"])
     b.add_argument("--zabbix-user", default="Admin")
     b.add_argument("--zabbix-password", default="")
     b.add_argument("--glpi-user", default="glpi")
@@ -229,8 +299,25 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("compliance")
 
+    so = sub.add_parser("sso")
+    so.add_argument("action", choices=["setup"])
+
+    st = sub.add_parser("staff")
+    st.add_argument("action", choices=["add", "list", "roles", "reset", "disable"])
+    st.add_argument("email", nargs="?", default="")
+    st.add_argument("--name", default="", help="full name, for example \"Adam Nugraha\"")
+    st.add_argument("--role", action="append",
+                    help="manager, engineer, automation (includes engineer) or admin (all three); repeatable")
+    st.add_argument("--otp", action="store_true", help="also require an authenticator app at first log-in")
+
+    ch = sub.add_parser("chat")
+    ch.add_argument("action", choices=["setup", "off", "test"])
+
     s = sub.add_parser("serve")
     s.add_argument("--port", type=int, default=80)
+
+    c = sub.add_parser("console")
+    c.add_argument("--port", type=int, default=8000)
 
     args = parser.parse_args(argv)
     if args.command == "bootstrap":
@@ -245,14 +332,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         settings.dry_run = True
     handlers = {"check": cmd_check, "bootstrap": cmd_bootstrap, "tenant": cmd_tenant, "device": cmd_device,
-                "proxy": cmd_proxy, "user": cmd_user, "compliance": cmd_compliance, "serve": cmd_serve}
+                "proxy": cmd_proxy, "user": cmd_user, "compliance": cmd_compliance, "serve": cmd_serve,
+                "sso": cmd_sso, "staff": cmd_staff, "console": cmd_console, "chat": cmd_chat}
     changes_tools = args.command in ("device", "proxy", "user", "compliance") or (
         args.command == "tenant" and args.action != "list")
-    if changes_tools:
-        # Same lock as the running service, so a webhook and this command never collide.
-        with exclusive():
-            return handlers[args.command](args)
-    return handlers[args.command](args)
+    try:
+        if changes_tools:
+            # Same lock as the running service, so a webhook and this command never collide.
+            with exclusive():
+                return handlers[args.command](args)
+        return handlers[args.command](args)
+    except APIError as exc:
+        if args.verbose:
+            raise
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

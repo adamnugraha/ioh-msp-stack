@@ -10,14 +10,16 @@ from open-source tools only:
 | Service desk, customer portal, service levels, asset register | GLPI 11 | GPL 3.0 |
 | Automation (Ansible and OpenTofu runs) | Semaphore UI Community 2.19 | MIT |
 | Git server for backups, templates and playbooks | Forgejo 12 | GPL 3.0 or later |
-| Integration service (this kit) | msp-glue | IOH-owned code |
+| Integration service and the MSP Console (this kit) | msp-glue | IOH-owned code |
 | Customer dashboards (phase 3) | Grafana OSS 13 with the Zabbix plugin | AGPL 3.0 / Apache 2.0 |
-| Single sign-on (phase 3) | Keycloak 26 | Apache 2.0 |
+| Single sign-on for staff | Keycloak 26 | Apache 2.0 |
+| Chat alerts to Telegram, Microsoft Teams or e-mail | Versus Incident 1.4 | MIT |
 
-Phases follow the build plan in the guide: the core tools go in first, Grafana and Keycloak in
-phase 3. Tested versions: Nautobot 3.2.6, Golden Config 3.0.8, Zabbix 7.0.31, GLPI 11.0.11,
-Semaphore 2.19.14, Forgejo 12.0.4, Grafana 13.2.3 with Zabbix plugin 6.8.0 (pinned in `.env.example`
-and the compose files).
+Phases follow the build plan in the guide: the core tools go in first, then the reverse proxy, then
+single sign-on, the MSP Console and chat alerts, and Grafana in phase 3. Tested versions: Nautobot
+3.2.6, Golden Config 3.0.8, Zabbix 7.0.31, GLPI 11.0.11, Semaphore 2.19.14, Forgejo 12.0.4, Grafana
+13.2.3 with Zabbix plugin 6.8.0, Keycloak 26.8.0, Versus Incident 1.4.13 (pinned in `.env.example`
+and the compose files; the Python packages of msp-glue in `glue/constraints.txt`).
 
 Nautobot is the master record. Engineers create a customer (tenant) and its devices in
 Nautobot; msp-glue then creates everything else: the customer's GLPI entity and service level
@@ -27,6 +29,21 @@ and (phase 3) its Grafana organisation. Devices become Zabbix hosts and GLPI ass
 about 20 seconds. Zabbix problems open GLPI incidents in the right customer entity; approved GLPI changes
 run Semaphore playbooks; Golden Config drift opens GLPI tickets; `mspctl user add` gives a
 customer user access to its own entity in GLPI and its own Grafana organisation.
+
+The MSP Console (`https://console.<domain>`) shows what every tool knows on one set of pages, with one
+sign-in through Keycloak; the tools themselves keep their own log-ins in this version. Engineers get
+an operations view: open problems of every customer, worst first, with their GLPI tickets; customer
+health; tickets past due; msp-glue's job queue. Managers get a service view: availability against
+target per customer, service-level breaches, mean time to resolve, configuration compliance and
+backups, month to date, with a CSV export. From the console an engineer acknowledges a problem
+(the note goes to the GLPI ticket), re-syncs a customer or starts a configuration check; with the
+automation role, also a Semaphore playbook, which needs a GLPI ticket or approved change of that
+customer and posts its start and result there. Every action is in the console's audit trail. Staff
+sign in through Keycloak with three roles: manager, engineer and automation.
+
+Chat alerts: problems of severity High or worse on managed devices go to the NOC's Telegram group,
+Teams channel or mailbox through Versus Incident, with the GLPI ticket, the Zabbix event and the
+console page linked; acknowledgements and recoveries follow. GLPI stays the record of every incident.
 
 The full guide (architecture, every step, every integration, operations) is the document
 "IOH open-source managed services platform" that comes with this kit.
@@ -41,10 +58,13 @@ components/                  one compose file per tool, so tools can be split ac
   nautobot/                  image with Golden Config, nautobot_config.py
   zabbix/ glpi/ semaphore/ forgejo/ glue/
   proxy/                     Caddy reverse proxy with TLS and network access rules (profile "proxy")
-  grafana/ keycloak/         phase 3 (profiles "grafana" and "sso")
+  keycloak/                  single sign-on for staff (profile "sso")
+  versus/                    chat alerts: settings and message templates (profile "chat")
+  grafana/                   phase 3 (profile "grafana")
 edge-collector/              Zabbix proxy for a customer site (pre-shared key, outbound only)
-glue/                        msp-glue source: Python package, Dockerfile, mappings.yaml, unit tests
-zabbix/media/                Zabbix webhook "GLPI MSP" (JavaScript source and importable YAML)
+glue/                        msp-glue source: Python package, Dockerfile, mappings.yaml, unit tests;
+                             msp_glue/console/ is the MSP Console (profile "console")
+zabbix/media/                Zabbix webhooks "GLPI MSP" and "Versus chat" (JavaScript sources, importable YAML)
 golden-config/               starter content of the shared Golden Config Git repository
 semaphore/playbooks/         starter content of the shared playbook Git repository
 grafana/                     customer dashboard template
@@ -79,7 +99,7 @@ Each version of the kit is published as a zip in the `dist` folder of this repos
 SHA-256 checksum in `dist/SHA256SUMS`. On the server (`wget -O` works the same as `curl -o`):
 
 ```bash
-curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.0.2.zip
+curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.1.0.zip
 sha256sum /tmp/ioh-msp-stack.zip      # must equal the line for this file in dist/SHA256SUMS
 command -v unzip >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y unzip)
 sudo mkdir -p /opt/ioh-msp-stack && sudo chown "$(id -un):" /opt/ioh-msp-stack
@@ -114,8 +134,21 @@ Then, from `/opt/ioh-msp-stack` and without sudo:
 ./scripts/install.sh status                        # which stages are done
 ./scripts/install.sh proxy                         # HTTPS on https://<tool>.<domain> (needs the DNS names)
 ./scripts/install.sh certs ~/fullchain.pem ~/privkey.pem   # IOH certificates instead of Caddy's own
+./scripts/install.sh sso --admin-email you@ioh.co.id --name "Your Name"   # Keycloak and the first administrator
+./scripts/install.sh console                       # the MSP Console on https://console.<domain>
+./scripts/install.sh chat telegram                 # chat alerts (or: chat teams, chat email, chat test, chat off)
 ./scripts/install.sh grafana                       # phase 3: customer dashboards
 ```
+
+`sso` starts Keycloak, creates the realm `msp` with the three roles and the console's client, and
+with `--admin-email` the first administrator; it prints a one-time password that Keycloak replaces
+at the first sign-in. `console` starts the MSP Console and proves that its sign-in goes to Keycloak.
+Each needs its DNS name (or Cloudflare route): `sso.<domain>` and `console.<domain>`, like the tools.
+`chat` asks for the bot token and chat ID (Telegram), the workflow address (Teams) or the mail
+server (e-mail), with hidden typing for secrets, checks them, sets up Zabbix and sends a test
+message. Which severities go to chat, and the one-minute wait before the first message (a problem
+that clears by itself within it never reaches the chat), are in the `chat` section of
+`glue/mappings.yaml`.
 
 Core stages: preflight, settings, network, images, start, glpi-api, forgejo-admin, tokens, platform,
 glue, harden (new random passwords for Zabbix `Admin` and GLPI `glpi`, GLPI demo accounts switched
@@ -131,6 +164,11 @@ Caddy's own certificate authority.
 To update the kit later: back up, download the new version's zip from `dist`, unzip it over the
 folder the same way (your `.env`, secrets and certificates are not in the zip, so they stay), then run
 `./scripts/install.sh images`, `docker compose up -d` and `./scripts/install.sh check`.
+
+From 1.0.x to 1.1.0, after unpacking: `./scripts/install.sh images` (builds msp-glue 1.1), then
+`./scripts/install.sh sso --admin-email <you> --name "<your name>"`, `./scripts/install.sh console`
+and, if you want chat alerts, `./scripts/install.sh chat telegram` (or teams, email). The missing
+secrets are added to `.env` on the way; nothing else changes.
 
 The guide's build tab lists the same work as manual steps, for anyone who wants to see or repeat a
 single step by hand.
@@ -148,14 +186,28 @@ docker compose exec msp-glue mspctl bootstrap platform    # re-apply the shared 
 docker compose exec msp-glue mspctl user add acme budi@acme.example --name "Budi Santoso" --grafana
 docker compose exec msp-glue mspctl user disable acme budi@acme.example
 docker compose exec msp-glue mspctl compliance            # refresh configuration-drift tickets
+docker compose exec msp-glue mspctl staff add eko@ioh.co.id --name "Eko Prasetyo" --role engineer
+docker compose exec msp-glue mspctl staff list            # staff accounts and their groups
+docker compose exec msp-glue mspctl staff roles eko@ioh.co.id --role manager   # exactly these roles from now on
+docker compose exec msp-glue mspctl staff reset eko@ioh.co.id     # new one-time password, sessions ended
+docker compose exec msp-glue mspctl staff disable eko@ioh.co.id   # account off, sessions ended at once
+docker compose exec msp-glue mspctl chat test             # one test message to the NOC chat
 docker compose logs -f msp-glue                           # what msp-glue is doing
+docker compose logs -f msp-console versus-incident        # the console and the chat alerts
 ./scripts/add-customer-secrets.sh acme                    # device log-in and SNMP secrets of a new customer
 ./scripts/install.sh status                               # installation stages done, certificates in use
 sudo ./scripts/backup.sh                                  # nightly backup (cron, as root)
 ```
 
+Staff roles: `manager` (service view, read-only operations), `engineer` (operations and the
+console's actions), `automation` (engineer plus playbooks) and `admin` (all three). A disabled
+account, or a role taken away with `staff roles`, takes effect in the console within five minutes,
+when the console next checks with Keycloak. The console starts a playbook only when its Semaphore
+template allows the device limit to be set per run (`allow_override_limit`, on in every template the
+kit creates); without it Semaphore would run the playbook on all of the customer's devices.
+
 After editing `glue/mappings.yaml` or the msp-glue code, rebuild or restart it:
-`docker compose build msp-glue && docker compose up -d msp-glue`.
+`docker compose build msp-glue && docker compose up -d msp-glue msp-console`.
 
 ## Known issues found during testing (October 2026)
 
@@ -186,3 +238,18 @@ After editing `glue/mappings.yaml` or the msp-glue code, rebuild or restart it:
 * Docker's default address pools (172.17.0.0/16 and up, 192.168.0.0/16) can overlap networks you
   manage and hide them behind a local route. Create the `msp` network with an explicit subnet and set
   `default-address-pools` in `/etc/docker/daemon.json` to a range no customer uses.
+* Docker hands out container addresses again after its own restart, so a lab device without a fixed
+  address can end up with another container's old address while Nautobot still points at it. The lab
+  devices now have fixed addresses (.201 to .204 of the platform network).
+* Zabbix shows the name of the user who acknowledged a problem only to recipients who share a user
+  group with that user; otherwise the follow-up says "Inaccessible user". The console acknowledges as
+  svc-msp-glue, which `./scripts/install.sh console` adds to the NOC group, and names the engineer in
+  the message.
+* Keycloak behind a reverse proxy: `KC_HOSTNAME=https://sso.<domain>` with
+  `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true` gives browsers the public address and lets the console talk
+  to `http://keycloak:8080` directly; the issuer stays the public one, so tokens check out either way.
+* Versus Incident's message templates know a limited set of functions (`int` is missing, for example);
+  the kit's templates use only what the tested 1.4.13 offers. Teams turns each line with a link into
+  one clickable block, so the Teams template puts one link per line.
+* Versus Incident 1.4 releases add AI and enterprise features quickly. The kit uses only its alert
+  path, with the agent, queues and on-call switched off; test a newer `VERSUS_IMAGE` in a lab first.

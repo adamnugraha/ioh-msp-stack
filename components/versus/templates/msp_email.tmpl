@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>{{ .problem | html }}</title></head>
+<body style="font-family: Arial, Helvetica, sans-serif; color: #18212d;">
+<div style="max-width: 640px; margin: 0 auto; padding: 16px;">
+  <p style="margin: 0 0 12px; font-size: 18px; font-weight: bold; color: {{ if eq .kind "resolved" }}#18794e{{ else if eq .kind "update" }}#1f5fa8{{ else }}#b42318{{ end }};">
+    {{ if eq .kind "resolved" }}Resolved{{ else if eq .kind "update" }}Update{{ else }}{{ .severity | html }}{{ end }}: {{ .problem | html }}
+  </p>
+  <table style="border-collapse: collapse; font-size: 14px;">
+    <tr><td style="padding: 3px 12px 3px 0; color: #5b687a;">Customer</td><td>{{ .customer | html }}</td></tr>
+    <tr><td style="padding: 3px 12px 3px 0; color: #5b687a;">Device</td><td>{{ .device | html }}{{ if .address }} ({{ .address | html }}){{ end }}{{ if .site }}, {{ .site | html }}{{ end }}</td></tr>
+    {{ if eq .kind "resolved" }}<tr><td style="padding: 3px 12px 3px 0; color: #5b687a;">Down for</td><td>{{ .duration | html }}</td></tr>
+    {{ else }}<tr><td style="padding: 3px 12px 3px 0; color: #5b687a;">Since</td><td>{{ .started | html }}</td></tr>{{ end }}
+    {{ if .opdata }}<tr><td style="padding: 3px 12px 3px 0; color: #5b687a;">Value</td><td>{{ .opdata | html }}</td></tr>{{ end }}
+    {{ if eq .kind "update" }}<tr><td style="padding: 3px 12px 3px 0; color: #5b687a;">Update</td><td><b>{{ .update_user | html }}</b> {{ .update_action | html }}{{ if .update_message }}: {{ .update_message | html }}{{ end }}</td></tr>{{ end }}
+    {{ if .ticket_id }}<tr><td style="padding: 3px 12px 3px 0; color: #5b687a;">Ticket</td><td><a href="{{ .ticket_url | html }}">GLPI #{{ .ticket_id | html }}</a></td></tr>{{ end }}
+  </table>
+  <p style="margin: 14px 0 0; font-size: 14px;"><a href="{{ .event_url | html }}">Open the event in Zabbix</a>{{ if .console_url }} · <a href="{{ .console_url | html }}">Open the customer in the MSP Console</a>{{ end }}</p>
+  <p style="margin: 18px 0 0; font-size: 12px; color: #8a96a6;">Sent by the IOH managed services platform. Reply in GLPI, not to this e-mail.</p>
+</div>
+</body>
+</html>

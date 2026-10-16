@@ -6,6 +6,7 @@ services:
     networks:
       default:
         aliases: [lab-bankx-proxy]
+        ipv4_address: "${LAB_IP_BANKX_PROXY:-172.30.0.204}"
 
 networks:
   default:

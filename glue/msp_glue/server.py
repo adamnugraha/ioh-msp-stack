@@ -1,10 +1,13 @@
 """Webhook receiver and scheduler.
 
 Endpoints
-  GET  /healthz          liveness check
-  POST /hooks/nautobot   tenant and device changes (signed with NAUTOBOT_WEBHOOK_SECRET)
-  POST /hooks/glpi       change updates (signed with GLPI_WEBHOOK_SECRET)
-  POST /run/{job}        manual trigger: reconcile, compliance (needs the Nautobot token as bearer)
+  GET  /healthz              liveness check
+  POST /hooks/nautobot       tenant and device changes (signed with NAUTOBOT_WEBHOOK_SECRET)
+  POST /hooks/glpi           change updates (signed with GLPI_WEBHOOK_SECRET)
+  POST /run/{job}            manual trigger: reconcile, compliance        } these three need the
+  POST /run/{job}/{code}     tenant (provision or repair one customer),    } Nautobot token as bearer
+                             devices (push one customer's devices)        } (the MSP Console sends it)
+  GET  /jobs                 the last 50 jobs with their result
 
 All work runs on one background worker thread, one job at a time, so two webhooks can
 never update the same object at the same moment.
@@ -12,8 +15,10 @@ never update the same object at the same moment.
 
 from __future__ import annotations
 
+import collections
 import hashlib
 import hmac
+import itertools
 import json
 import logging
 import queue
@@ -28,23 +33,38 @@ from .locking import exclusive
 from .settings import settings
 
 log = logging.getLogger("msp_glue.server")
-app = FastAPI(title="msp-glue", version="1.0")
-_jobs: "queue.Queue[tuple[str, callable, tuple]]" = queue.Queue()
+app = FastAPI(title="msp-glue", version="1.1")
+_jobs: "queue.Queue[tuple[dict, callable, tuple]]" = queue.Queue()
 _state = {"last_reconcile": None, "last_error": None}
+_history: "collections.deque[dict]" = collections.deque(maxlen=50)
+_ids = itertools.count(1)
+# Jobs whose work a full reconcile does again (job names start with these words).
+SYNC_JOBS = ("reconcile", "tenant ", "device ", "devices ", "retire ")
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _worker() -> None:
     while True:
-        name, func, args = _jobs.get()
+        record, func, args = _jobs.get()
         started = time.time()
+        record.update(status="running", started=_now())
         try:
             with exclusive():
                 result = func(*args)
-            log.info("Job %s done in %.1fs: %s", name, time.time() - started, result)
+            record.update(status="done", result=str(result)[:500])
+            if (_state["last_error"] or "").startswith(record["name"] + ":"):
+                _state["last_error"] = None   # the same job went through this time
+            log.info("Job %s done in %.1fs: %s", record["name"], time.time() - started, result)
         except Exception as exc:  # noqa: BLE001
-            _state["last_error"] = f"{name}: {exc}"
-            log.exception("Job %s failed", name)
+            _state["last_error"] = f"{record['name']}: {exc}"
+            record.update(status="failed", result=f"{type(exc).__name__}: {exc}"[:500])
+            log.exception("Job %s failed", record["name"])
         finally:
+            record["finished"] = _now()
+            record["seconds"] = round(time.time() - started, 1)
             _jobs.task_done()
 
 
@@ -61,8 +81,11 @@ def _scheduler() -> None:
         time.sleep(max(60, settings.reconcile_interval))
 
 
-def enqueue(name: str, func, *args) -> None:
-    _jobs.put((name, func, args))
+def enqueue(name: str, func, *args, requested_by: str = "") -> dict:
+    record = {"id": next(_ids), "name": name, "status": "queued", "queued": _now(), "requested_by": requested_by}
+    _history.appendleft(record)
+    _jobs.put((record, func, args))
+    return record
 
 
 def reconcile() -> str:
@@ -70,6 +93,13 @@ def reconcile() -> str:
         tenants.ensure_tenant(tenant)
     report = devices.sync_all()
     _state["last_reconcile"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    # A full sync repairs what earlier sync jobs left undone, so their error is no longer open. Errors of
+    # other jobs (compliance, GLPI changes) stay until their own job succeeds or fails again.
+    if report.errors:
+        # Not "reconcile: ...": the worker clears that form as soon as this job returns.
+        _state["last_error"] = f"reconcile found {len(report.errors)} device error(s), first: {report.errors[0]}"[:500]
+    elif (_state["last_error"] or "").startswith(SYNC_JOBS):
+        _state["last_error"] = None
     return report.summary()
 
 
@@ -82,7 +112,7 @@ def _start() -> None:
 
 @app.get("/healthz")
 def healthz() -> dict:
-    return {"status": "ok", "queue": _jobs.qsize(), **_state}
+    return {"status": "ok", "queue": _jobs.qsize(), "version": app.version, **_state}
 
 
 # ------------------------------------------------------------------ Nautobot
@@ -170,13 +200,41 @@ def glpi_challenge(crc_token: str = "") -> str:
 
 
 # ---------------------------------------------------------- manual triggers
-@app.post("/run/{job}")
-def run_job(job: str, request: Request) -> dict:
+def _authorise(request: Request) -> str:
     token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
     if not token or not hmac.compare_digest(token, settings.nautobot_token):
         raise HTTPException(status_code=401, detail="unauthorised")
+    # Who asked, for the job list (the console passes the signed-in engineer's e-mail address).
+    return request.headers.get("X-Requested-By", "")[:120]
+
+
+@app.post("/run/{job}")
+def run_job(job: str, request: Request) -> dict:
+    who = _authorise(request)
     jobs = {"reconcile": reconcile, "compliance": compliance.run}
     if job not in jobs:
         raise HTTPException(status_code=404, detail=f"unknown job, use one of {sorted(jobs)}")
-    enqueue(job, jobs[job])
-    return {"queued": job}
+    record = enqueue(job, jobs[job], requested_by=who)
+    return {"queued": job, "job": record["id"]}
+
+
+@app.post("/run/{job}/{code}")
+def run_customer_job(job: str, code: str, request: Request) -> dict:
+    who = _authorise(request)
+    if job not in ("tenant", "devices"):
+        raise HTTPException(status_code=404, detail="unknown job, use tenant or devices")
+    tenant = tenants.get_tenant(code)
+    if not tenant:
+        raise HTTPException(status_code=404, detail=f"customer {code} not found")
+    if job == "tenant":
+        record = enqueue(f"tenant {tenant.code}", tenants.ensure_tenant, tenant, requested_by=who)
+    else:
+        record = enqueue(f"devices {tenant.code}", lambda t: devices.sync_tenant(t).summary(), tenant,
+                         requested_by=who)
+    return {"queued": record["name"], "job": record["id"]}
+
+
+@app.get("/jobs")
+def jobs(request: Request) -> dict:
+    _authorise(request)
+    return {"jobs": list(_history), "queue": _jobs.qsize(), **_state}

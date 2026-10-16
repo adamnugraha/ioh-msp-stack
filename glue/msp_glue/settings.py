@@ -40,6 +40,20 @@ class Settings:
     grafana_admin_user: str = field(default_factory=lambda: _env("GRAFANA_ADMIN_USER", "admin"))
     grafana_admin_password: str = field(default_factory=lambda: _env("GRAFANA_ADMIN_PASSWORD"))
 
+    # Single sign-on (Keycloak). The internal URL is used for server-to-server calls; browsers use
+    # the public one. Both default from MSP_DOMAIN.
+    msp_domain: str = field(default_factory=lambda: _env("MSP_DOMAIN", "msp.example.internal"))
+    keycloak_url: str = field(default_factory=lambda: _env("KEYCLOAK_URL", "http://keycloak:8080"))
+    keycloak_realm: str = field(default_factory=lambda: _env("KEYCLOAK_REALM", "msp"))
+    keycloak_glue_secret: str = field(default_factory=lambda: _env("KEYCLOAK_GLUE_CLIENT_SECRET"))
+    keycloak_console_secret: str = field(default_factory=lambda: _env("KEYCLOAK_CONSOLE_CLIENT_SECRET"))
+
+    # MSP Console
+    console_session_secret: str = field(default_factory=lambda: _env("CONSOLE_SESSION_SECRET"))
+    console_data_dir: Path = field(default_factory=lambda: Path(_env("CONSOLE_DATA_DIR", "/data")))
+    glue_internal_url: str = field(default_factory=lambda: _env("GLUE_INTERNAL_URL", "http://msp-glue"))
+    console_cache_seconds: int = field(default_factory=lambda: int(_env("CONSOLE_CACHE_SECONDS", "45") or 45))
+
     reconcile_interval: int = field(default_factory=lambda: int(_env("GLUE_RECONCILE_INTERVAL", "600") or 600))
     compliance_interval: int = field(default_factory=lambda: int(_env("GLUE_COMPLIANCE_INTERVAL", "3600") or 3600))
     secrets_dir: Path = field(default_factory=lambda: Path(_env("GLUE_SECRETS_DIR", "/run/msp-secrets/tenants")))
@@ -49,6 +63,17 @@ class Settings:
     lock_file: Path = field(default_factory=lambda: Path(_env("GLUE_LOCK_FILE", "/tmp/msp-glue.lock")))
 
     _mappings: dict | None = None
+
+    def public_url(self, tool: str) -> str:
+        """Address engineers' browsers use for a tool, for example https://nautobot.<MSP_DOMAIN>.
+
+        Override one with <TOOL>_PUBLIC_URL (the lab publishes tools on local ports instead).
+        """
+        override = _env(f"{tool.upper()}_PUBLIC_URL")
+        if override:
+            return override.rstrip("/")
+        host = {"forgejo": "git", "keycloak": "sso"}.get(tool, tool)
+        return f"https://{host}.{self.msp_domain}"
 
     @property
     def mappings(self) -> dict:

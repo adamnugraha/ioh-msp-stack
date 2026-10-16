@@ -91,6 +91,11 @@ def glue(*args) -> subprocess.CompletedProcess:
     return subprocess.run(COMPOSE + ["exec", "-T", "msp-glue", "mspctl", *args], capture_output=True, text=True)
 
 
+def glpi_console(*args) -> subprocess.CompletedProcess:
+    return subprocess.run(COMPOSE + ["exec", "-T", "glpi", "php", "bin/console", *args], capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL, timeout=120)
+
+
 def tenant_cf(code):
     for t in nb_list("tenancy/tenants/"):
         if (t["custom_fields"] or {}).get("msp_code") == code:
@@ -306,10 +311,19 @@ def customer_portal_user():
         return False, f"user add failed or account already existed: {result.stdout[-300:]} {result.stderr[-300:]}"
     _, acme = tenant_cf("acme")
     _, bankx = tenant_cf("bankx")
-    # The customer opens a session with its own name and password, as the portal does.
+    # The customer opens a session with its own name and password, as the portal does. On a platform
+    # after the installer's harden stage, the API refuses password log-ins: allow them for this check only.
     auth = base64.b64encode(f"{login}:{passwords[0]}".encode()).decode()
     h = {"Content-Type": "application/json", "App-Token": ENV["GLPI_APP_TOKEN"], "Authorization": "Basic " + auth}
-    session = requests.get(Glpi.base + "initSession", headers=h, timeout=30).json()["session_token"]
+    answer = requests.get(Glpi.base + "initSession", headers=h, timeout=30).json()
+    switched = isinstance(answer, list) and "ERROR_LOGIN_WITH_CREDENTIALS_DISABLED" in answer
+    if switched:
+        glpi_console("config:set", "enable_api_login_credentials", "1")
+        answer = requests.get(Glpi.base + "initSession", headers=h, timeout=30).json()
+        glpi_console("config:set", "enable_api_login_credentials", "0")
+    if not isinstance(answer, dict) or "session_token" not in answer:
+        return False, f"the customer user could not log in to GLPI: {answer}"
+    session = answer["session_token"]
     hs = {"Content-Type": "application/json", "App-Token": ENV["GLPI_APP_TOKEN"], "Session-Token": session}
     profiles = requests.get(Glpi.base + "getMyProfiles", headers=hs, timeout=30).json().get("myprofiles", [])
     entities = requests.get(Glpi.base + "getMyEntities", headers=hs, params={"is_recursive": 1},
@@ -350,8 +364,28 @@ def grafana_isolation():
     return bool(seen) and not leak, json.dumps(seen)
 
 
+@check("MSP Console answers and sends sign-in to Keycloak")
+def console():
+    if "console" not in ENV.get("COMPOSE_PROFILES", "").split(","):
+        return True, "skipped (profile console not on)"
+    health = requests.get("http://localhost:8088/healthz", timeout=10)
+    login = requests.get("http://localhost:8088/auth/login", allow_redirects=False, timeout=20)
+    where = login.headers.get("location", "")
+    ok = health.status_code == 200 and login.status_code == 302 and "/realms/msp/protocol/openid-connect/auth" in where
+    return ok, f"healthz {health.status_code}, sign-in {login.status_code} to {where.split('?')[0]}"
+
+
+@check("Chat alerts: Versus delivers a test message")
+def chat_test():
+    if "chat" not in ENV.get("COMPOSE_PROFILES", "").split(","):
+        return True, "skipped (profile chat not on)"
+    result = glue("chat", "test")
+    return result.returncode == 0, (result.stdout + result.stderr).strip()[-200:]
+
+
 ALL = (connectivity, tenants_provisioned, zabbix_hosts, glpi_assets, zabbix_permissions, webhook_device,
-       golden_config, drift_ticket, change_automation, customer_portal_user, alert_to_ticket, grafana_isolation)
+       golden_config, drift_ticket, change_automation, customer_portal_user, alert_to_ticket, grafana_isolation,
+       console, chat_test)
 
 if __name__ == "__main__":
     # python3 lab/check.py                       run every check

@@ -522,6 +522,25 @@ def _restore_media_settings(z: Zabbix, before: dict) -> None:
     log.info("Zabbix: kept the existing settings of media type GLPI MSP (no --webhook-token given)")
 
 
+def ensure_glue_user_in_noc(z: Zabbix, noc_group: str | None = None) -> None:
+    """The MSP Console acknowledges problems as svc-msp-glue. As a member of the NOC user group too, its
+    name shows in the GLPI follow-up and the chat message instead of "Inaccessible user"."""
+    if noc_group is None:
+        found = z.call("usergroup.get", {"filter": {"name": [settings.mappings["zabbix"]["noc_usergroup"]]},
+                                         "output": ["usrgrpid"]})
+        if not found:
+            return
+        noc_group = found[0]["usrgrpid"]
+    glue_user = z.call("user.get", {"filter": {"username": ["svc-msp-glue"]}, "output": ["userid"],
+                                    "selectUsrgrps": ["usrgrpid"]})
+    if glue_user:
+        current = {g["usrgrpid"] for g in glue_user[0].get("usrgrps", [])}
+        if noc_group not in current:
+            z.call("user.update", {"userid": glue_user[0]["userid"],
+                                   "usrgrps": [{"usrgrpid": g} for g in sorted(current | {noc_group})]})
+            log.info("Zabbix: svc-msp-glue added to the NOC user group")
+
+
 def _ensure_ticket_action(z: Zabbix, webhook_token: str, glpi_ids: dict) -> None:
     """Service user + media + action: problems on managed hosts open GLPI incidents."""
     zm = settings.mappings["zabbix"]
@@ -546,6 +565,7 @@ def _ensure_ticket_action(z: Zabbix, webhook_token: str, glpi_ids: dict) -> None
     # disabled because the service group disables it and the most restrictive setting wins.
     noc_group = z.call("usergroup.get", {"filter": {"name": [zm["noc_usergroup"]]}, "output": ["usrgrpid"]})[0]["usrgrpid"]
     groups = [{"usrgrpid": service_group}, {"usrgrpid": noc_group}]
+    ensure_glue_user_in_noc(z, noc_group)
     user_role = z.call("role.get", {"filter": {"name": ["User role"]}, "output": ["roleid"]})[0]["roleid"]
     user = z.call("user.get", {"filter": {"username": ["svc-glpi-webhook"]}, "output": ["userid"]})
     medias = [{"mediatypeid": mediatypeid, "sendto": "glpi", "active": 0, "severity": 63, "period": "1-7,00:00-24:00"}]

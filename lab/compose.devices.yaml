@@ -1,5 +1,7 @@
 # Lab only: simulated customer devices on the platform network.
 #   docker compose -f lab/compose.devices.yaml up -d
+# Fixed addresses (run-lab.sh sets them from MSP_SUBNET: .201 to .203), so a restart of Docker cannot
+# hand a device's address to another container while Nautobot and Zabbix still point at it.
 services:
   lab-acme-rtr01:
     image: msp/lab-fakenos:1.2.1
@@ -9,18 +11,21 @@ services:
       # Deliberate drift: the standard has two NTP servers, this router only has one.
       NTP_SERVERS: "10.255.0.1"
       LOG_HOSTS: "10.255.0.10"
-    networks: [msp]
+    networks:
+      msp: {ipv4_address: "${LAB_IP_ACME_RTR01:-172.30.0.201}"}
   lab-acme-srv01:
     image: msp/lab-linux:1.0
     build: ./linux-server
-    networks: [msp]
+    networks:
+      msp: {ipv4_address: "${LAB_IP_ACME_SRV01:-172.30.0.202}"}
   lab-bankx-rtr01:
     image: msp/lab-fakenos:1.2.1
     environment:
       DEVICE_NAME: ckr01-rtr01
       NTP_SERVERS: "10.255.0.1,10.255.0.2"
       LOG_HOSTS: "10.255.0.10"
-    networks: [msp]
+    networks:
+      msp: {ipv4_address: "${LAB_IP_BANKX_RTR01:-172.30.0.203}"}
 
 networks:
   msp:

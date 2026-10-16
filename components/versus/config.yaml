@@ -1,0 +1,75 @@
+# Versus Incident settings for the IOH platform (chat alerts only).
+#
+# Zabbix sends each problem on a managed device here (webhook "Versus chat"), and Versus posts it to
+# the NOC's Telegram group, Microsoft Teams channel or mailbox. GLPI stays the record of every
+# incident; chat is for being told quickly. Paid on-call services, queues and the AI agent of Versus
+# are not used and stay off.
+#
+# Channels and their credentials come from .env (./scripts/install.sh chat writes them):
+#   CHAT_TELEGRAM_*  CHAT_MSTEAMS_*  CHAT_EMAIL_*  CHAT_PROXY_URL
+# ${NAME} values are filled in from the container environment when Versus starts.
+
+name: versus
+host: 0.0.0.0
+port: 3000
+public_host: ''
+
+# Needed by Versus's own admin pages. They are not published (no reverse proxy site), but the
+# value is still random (VERSUS_GATEWAY_SECRET in .env).
+gateway_secret: ${GATEWAY_SECRET}
+
+# Outbound proxy for Telegram (only when CHAT_USE_PROXY=true). Teams and e-mail use their own
+# network path.
+proxy:
+  url: ${PROXY_URL}
+  username: ''
+  password: ''
+
+alert:
+  # Do not copy alert bodies into the container log.
+  debug_body: false
+
+  telegram:
+    enable: false            # switched on by TELEGRAM_ENABLE=true
+    bot_token: ${TELEGRAM_BOT_TOKEN}
+    chat_id: ${TELEGRAM_CHAT_ID}
+    template_path: "config/msp_telegram.tmpl"
+    use_proxy: ${TELEGRAM_USE_PROXY}
+
+  msteams:
+    enable: false            # switched on by MSTEAMS_ENABLE=true
+    power_automate_url: ${MSTEAMS_POWER_AUTOMATE_URL}
+    template_path: "config/msp_msteams.tmpl"
+
+  email:
+    enable: false            # switched on by EMAIL_ENABLE=true
+    smtp_host: ${SMTP_HOST}
+    smtp_port: ${SMTP_PORT}
+    username: ${SMTP_USERNAME}
+    password: ${SMTP_PASSWORD}
+    to: ${EMAIL_TO}
+    subject: ${EMAIL_SUBJECT}
+    template_path: "config/msp_email.tmpl"
+
+  slack:
+    enable: false
+  viber:
+    enable: false
+  lark:
+    enable: false
+
+queue:
+  enable: false
+
+oncall:
+  enable: false
+  initialized_only: false
+
+# Sent alerts are kept in /app/data (volume versus_data), newest 1000.
+storage:
+  type: file
+  file:
+    max_incidents: 1000
+
+agent:
+  enable: false

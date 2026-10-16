@@ -1,8 +1,8 @@
-# Keycloak (phase 3): one login for engineers across Nautobot, Zabbix, GLPI and Grafana,
-# and the place where customer portal accounts are managed. See the guide, section on single sign-on.
+# Keycloak: single sign-on for engineers and managers (realm "msp"). The MSP Console logs in through
+# it; ./scripts/install.sh sso switches it on and creates the realm, roles and first account.
 services:
   keycloak:
-    # Optional: started only when COMPOSE_PROFILES in .env lists "sso" (add sso to COMPOSE_PROFILES in .env, see the guide).
+    # Optional: started only when COMPOSE_PROFILES in .env lists "sso" (./scripts/install.sh sso adds it).
     profiles: ["sso"]
     image: ${KEYCLOAK_IMAGE}
     restart: unless-stopped
@@ -12,13 +12,24 @@ services:
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
       KC_DB_USERNAME: keycloak
       KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      # Browsers use the public name; containers (the console, msp-glue) call http://keycloak:8080
+      # directly, and the back-channel setting lets Keycloak answer them on that internal address.
       KC_HOSTNAME: https://sso.${MSP_DOMAIN}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_HTTP_ENABLED: "true"          # TLS ends at the reverse proxy
       KC_PROXY_HEADERS: xforwarded
       KC_HEALTH_ENABLED: "true"
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
       TZ: ${TZ}
+    healthcheck:
+      # The image has no curl; ask the management port (9000) with bash's built-in TCP support.
+      # Ready answers 200; while starting it answers 503 (its body still mentions UP for some checks).
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q 'HTTP/1.1 200' <&3"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
     depends_on:
       postgres: {condition: service_healthy}
     networks: [msp]

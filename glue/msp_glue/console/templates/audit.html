@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Audit trail{% endblock %}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1>Audit trail</h1>
+    <p class="meta">Every sign-in and every change made from the console, newest first. Changes made directly in a tool are in that tool's own log.</p>
+  </div>
+  <div class="links"><a class="btn" href="/audit.csv?customer={{ filters.customer|urlencode }}&amp;email={{ filters.email|urlencode }}&amp;action={{ filters.action|urlencode }}">Download as CSV</a></div>
+</div>
+
+<form class="card filters" method="get" action="/audit">
+  <label>Customer<select name="customer"><option value="">All</option>{% for c in choices.customer %}<option {{ 'selected' if c == filters.customer }}>{{ c }}</option>{% endfor %}</select></label>
+  <label>Person<select name="email"><option value="">All</option>{% for c in choices.email %}<option {{ 'selected' if c == filters.email }}>{{ c }}</option>{% endfor %}</select></label>
+  <label>Action<select name="action"><option value="">All</option>{% for c in choices.action %}<option {{ 'selected' if c == filters.action }}>{{ c }}</option>{% endfor %}</select></label>
+  <button class="btn" type="submit">Show</button>
+  {% if filters.customer or filters.email or filters.action %}<a href="/audit">Clear</a>{% endif %}
+</form>
+
+<section class="card">
+  <div class="table-wrap">
+    <table class="grid">
+      <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Customer</th><th>What</th><th>Ticket</th><th>Outcome</th><th>Result</th><th>From</th></tr></thead>
+      <tbody>
+      {% for e in entries %}
+      <tr>
+        <td class="nowrap" title="{{ e.at|when(true) }}">{{ e.at.strftime('%d %b %H:%M:%S') }}</td>
+        <td>{{ e.name or e.email }}<small>{{ e.email }}</small></td>
+        <td>{{ e.action }}</td>
+        <td>{% if e.customer %}<a href="/customers/{{ e.customer }}">{{ e.customer }}</a>{% endif %}</td>
+        <td>{{ e.target }}{% if e.reason %}<small>{{ e.reason }}</small>{% endif %}</td>
+        <td>{{ e.ticket }}</td>
+        <td><span class="pill {{ status_class(e.outcome) }}">{{ e.outcome }}</span>{% if e.updated %}<small>{{ e.updated.strftime('%H:%M:%S') }}</small>{% endif %}{% if e.detail.link %}<small><a href="{{ e.detail.link }}" target="_blank" rel="noopener">{{ 'Semaphore task' if e.action == 'playbook' else 'Nautobot job' if e.action == 'configuration check' else 'details' }}</a></small>{% endif %}</td>
+        <td class="clip wide" title="{{ e.result }}">{{ e.result }}</td>
+        <td class="mono">{{ e.address }}</td>
+      </tr>
+      {% else %}
+      <tr class="empty"><td colspan="9">Nothing recorded yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Signed in now</h2></div>
+  <div class="table-wrap">
+    <table class="grid">
+      <thead><tr><th>Who</th><th>Roles</th><th>Signed in</th><th>Last checked with Keycloak</th></tr></thead>
+      <tbody>
+      {% for s in sessions %}
+      <tr><td>{{ s.name }}<small>{{ s.email }}</small></td><td>{{ s.roles|map('replace', 'msp-', '')|join(', ') }}</td><td>{{ s.created|when }}</td><td>{{ s.checked|ago }}</td></tr>
+      {% else %}
+      <tr class="empty"><td colspan="4">Nobody.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

@@ -66,9 +66,8 @@ def sync_tenant(tenant: Tenant, only_device_id: str | None = None) -> SyncReport
         tenant.zabbix_hostgroup_id = tenant.custom_fields["msp_zabbix_hostgroup_id"]
 
     nb = clients.nautobot()
-    devices = nb.graphql(DEVICES_QUERY, {"tenant": [tenant.name]})["devices"]
-    if only_device_id:
-        devices = [d for d in devices if d["id"] == only_device_id]
+    all_devices = nb.graphql(DEVICES_QUERY, {"tenant": [tenant.name]})["devices"]
+    devices = [d for d in all_devices if d["id"] == only_device_id] if only_device_id else all_devices
     z = clients.zabbix()
     existing = {_tag(h, "nautobot_id"): h for h in z.managed_hosts() if _tag(h, "tenant") == tenant.code}
     ctx = _Context(tenant=tenant, z=z, templates_cache={}, dropdown_cache={})
@@ -90,7 +89,8 @@ def sync_tenant(tenant: Tenant, only_device_id: str | None = None) -> SyncReport
                     report.disabled.append(f"{tenant.code}/{host['name']}")
 
     refresh_zabbix_permissions(z, tenant)
-    _push_inventory(tenant, devices)
+    # Always the whole customer: a webhook for one device must not shrink the Ansible inventory to that device.
+    _push_inventory(tenant, all_devices)
     return report
 
 
@@ -115,12 +115,17 @@ def sync_device(device_id: str) -> SyncReport:
 
 
 def retire_device(device_id: str) -> None:
-    """Called when a device is deleted in Nautobot: disable its Zabbix host, mark the GLPI asset."""
+    """Called when a device is deleted in Nautobot: disable its Zabbix host, mark the GLPI asset and take it
+    out of the customer's Ansible inventory."""
     z = clients.zabbix()
     for host in z.managed_hosts():
         if _tag(host, "nautobot_id") == device_id:
             with clients.glpi() as g:
                 _retire_host(_Context(tenant=None, z=z, g=g, templates_cache={}, dropdown_cache={}), host)
+            code = _tag(host, "tenant")
+            tenant = next((t for t in managed_tenants() if t.code == code), None) if code else None
+            if tenant:
+                _push_inventory(tenant, clients.nautobot().graphql(DEVICES_QUERY, {"tenant": [tenant.name]})["devices"])
 
 
 # ============================================================================ internals

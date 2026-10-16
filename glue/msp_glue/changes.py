@@ -56,6 +56,11 @@ def handle_change(change_id: int) -> str:
             return "error: no tenant"
 
         variables = parse_variables(change.get("content") or "")
+        # Ansible's own variables (ansible_host, ansible_user, ...) could point the run at another
+        # host or account, so they are never taken from a change description.
+        refused = sorted(k for k in variables if k.lower().startswith("ansible_") or k == "glpi_change_id")
+        for key in refused:
+            variables.pop(key)
         sem = clients.semaphore()
         project_id = int(tenant.semaphore_project_id)
         template = next((t for t in sem.templates(project_id) if t["name"] == template_name), None)
@@ -63,12 +68,21 @@ def handle_change(change_id: int) -> str:
             g.add_followup("Change", change_id, f"{MARKER} Template '{template_name}' not found in project {tenant.code}.")
             return "error: template missing"
 
+        device = variables.get("device", "")
+        if device and not (template.get("task_params") or {}).get("allow_override_limit"):
+            # Semaphore would silently ignore the limit and run on the customer's whole inventory.
+            g.add_followup("Change", change_id, f"{MARKER} Not started: template '{template_name}' does not allow a "
+                           f"device limit, so it would run on every device of {tenant.code}. Allow the limit to be "
+                           "set per run in the template (allow_override_limit), then start the run for this change "
+                           "from the MSP Console.")
+            return "error: template ignores the device limit"
         extra = {"glpi_change_id": change_id, **variables}
-        task = sem.run_task(project_id, template["id"], extra_vars=extra, limit=variables.get("device", ""),
+        task = sem.run_task(project_id, template["id"], extra_vars=extra, limit=device,
                             message=f"GLPI change #{change_id}: {change.get('name', '')}"[:250])
         g.add_followup("Change", change_id,
                        f"{MARKER} Started Semaphore task #{task['id']} (template '{template_name}', "
-                       f"project {tenant.code}) with variables {extra}.")
+                       f"project {tenant.code}) with variables {extra}."
+                       + (f" Ignored (not allowed in a change): {', '.join(refused)}." if refused else ""))
     threading.Thread(target=_report_result, args=(change_id, project_id, task["id"]), daemon=True).start()
     return f"started task {task['id']}"
 
@@ -101,14 +115,24 @@ def parse_variables(content: str) -> dict:
 
 
 def _report_result(change_id: int, project_id: int, task_id: int) -> None:
+    report_task_result("Change", change_id, project_id, task_id)
+
+
+def report_task_result(itemtype: str, item_id: int, project_id: int, task_id: int, marker: str = MARKER,
+                       timeout: int = 4 * 3600) -> str:
+    """Wait for a Semaphore task (up to four hours: patch runs take a while), then add its status and the
+    last 40 log lines to a GLPI ticket or change."""
     sem = clients.semaphore()
+    status = "unknown"
     try:
-        task = sem.wait(project_id, task_id)
+        task = sem.wait(project_id, task_id, timeout=timeout, poll=10)
+        status = str(task.get("status"))
         output = _ANSI.sub("", sem.final_output(project_id, task_id))
         tail = html.escape("\n".join(output.splitlines()[-40:]))
-        body = (f"{MARKER} Semaphore task #{task_id} finished with status <b>{task.get('status')}</b>."
+        body = (f"{marker} Semaphore task #{task_id} finished with status <b>{html.escape(status)}</b>."
                 f"<pre>{tail}</pre>")
     except Exception as exc:  # noqa: BLE001
-        body = f"{MARKER} Could not read the result of Semaphore task #{task_id}: {exc}"
+        body = f"{marker} Could not read the result of Semaphore task #{task_id}: {html.escape(str(exc))}"
     with clients.glpi() as g:
-        g.add_followup("Change", change_id, body)
+        g.add_followup(itemtype, item_id, body)
+    return status

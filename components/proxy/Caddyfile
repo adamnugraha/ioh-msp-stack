@@ -54,6 +54,13 @@ glue.{$MSP_DOMAIN} {
 	reverse_proxy msp-glue:80
 }
 
+# MSP Console: one interface over every tool, sign-in through Keycloak (sso.{$MSP_DOMAIN}).
+console.{$MSP_DOMAIN} {
+	import site_tls
+	import engineers_only
+	reverse_proxy msp-console:8000
+}
+
 # Customer-facing: the service desk portal. The REST APIs are for the platform only.
 glpi.{$MSP_DOMAIN} {
 	import site_tls
@@ -71,7 +78,8 @@ grafana.{$MSP_DOMAIN} {
 	reverse_proxy grafana:3000
 }
 
-# Phase 3: single sign-on. The admin console stays internal.
+# Single sign-on (Keycloak). The browser comes here to sign in to the MSP Console; the Keycloak
+# administration pages stay internal.
 sso.{$MSP_DOMAIN} {
 	import site_tls
 	@admin_outside {

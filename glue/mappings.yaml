@@ -146,3 +146,17 @@ golden_config:
   intended_path_template: "{{obj.tenant.name|slugify}}/{{obj.location.name|slugify}}/{{obj.name}}.cfg"
   jinja_path_template: "templates/{{obj.platform.network_driver}}.j2"
   sotagg_query_name: "MSP golden config data"
+
+console:
+  # Semaphore templates that change devices. The MSP Console starts these only for a GLPI change in
+  # status Accepted of the same customer; any other template needs an open ticket or change.
+  # Add the names of your own templates that change something.
+  change_only_templates: ["Bounce interface", "Linux patching"]
+
+chat:
+  # Problems on managed devices of this severity or worse go to the NOC chat (./scripts/install.sh chat):
+  # 2 Warning, 3 Average, 4 High, 5 Disaster.
+  min_severity: 4
+  # Wait this long before the first message: a problem that clears by itself within it never reaches the
+  # chat, and the message can already name the GLPI ticket. 0 sends at once; otherwise 1m or more.
+  delay: 1m
