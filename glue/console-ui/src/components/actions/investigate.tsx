@@ -72,7 +72,7 @@ export function InvestigateSheet({
       <SheetContent side="right" className="w-full gap-0 overflow-y-auto p-0 sm:max-w-xl">
         <SheetHeader className="border-b px-5 pb-4 pt-5">
           <SheetTitle className="flex items-center gap-2 text-[17px]">
-            <ScanSearch className="size-5 text-primary" /> Investigate
+            <ScanSearch className="size-5 text-link" /> Investigate
           </SheetTitle>
           <SheetDescription className="text-[13px]">
             Read-only: the console reads Zabbix, Nautobot, GLPI, Forgejo and Semaphore with its own accounts and changes nothing. A model drafts the cause; you check it

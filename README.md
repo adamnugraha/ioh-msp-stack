@@ -64,6 +64,10 @@ components/                  one compose file per tool, so tools can be split ac
 edge-collector/              Zabbix proxy for a customer site (pre-shared key, outbound only)
 glue/                        msp-glue source: Python package, Dockerfile, mappings.yaml, unit tests;
                              msp_glue/console/ is the MSP Console (profile "console")
+glue/console-ui/             the MSP Console front end from 1.2 on (React, TypeScript, shadcn/ui) and its
+                             preview with sample data; see its README
+branding/                    your logo for the console (the file stays out of Git; see its README)
+.github/workflows/           image builds: build, scan with Trivy, push to Docker Hub
 zabbix/media/                Zabbix webhooks "GLPI MSP" and "Versus chat" (JavaScript sources, importable YAML)
 golden-config/               starter content of the shared Golden Config Git repository
 semaphore/playbooks/         starter content of the shared playbook Git repository
@@ -87,6 +91,34 @@ python3 lab/check.py golden_config     # run one check again (names are the func
 
 Behind a TLS-inspecting proxy: `export HTTPS_PROXY=... LAB_CA_FILE=/path/to/proxy-ca.crt` first.
 The lab platform network uses 172.30.0.0/24; set `MSP_SUBNET` to change it.
+
+## Images on Docker Hub
+
+The two images the kit builds itself, and the console preview, are published to
+`adityanugraha/ioh-msp-stack` by the workflow in `.github/workflows/images.yml`:
+
+| Tag | What it is |
+|---|---|
+| `glue-1.1.0`, `glue-1.1` | msp-glue and the MSP Console |
+| `nautobot-3.2.6-gc3.0.8` | Nautobot with the Golden Config and Nornir apps |
+| `console-preview` | the new console with made-up sample data; connects to nothing |
+
+Every push builds and scans them with Trivy; they are pushed from `main`, or when the workflow is
+started by hand (Actions, Images, Run workflow), once the repository has the secrets
+`DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token with read and write access).
+
+To use the published images instead of building on the server, pull and name them the way the
+compose files expect, then start as usual:
+
+```bash
+docker pull adityanugraha/ioh-msp-stack:glue-1.1.0
+docker tag adityanugraha/ioh-msp-stack:glue-1.1.0 msp/glue:1.1
+docker pull adityanugraha/ioh-msp-stack:nautobot-3.2.6-gc3.0.8
+docker tag adityanugraha/ioh-msp-stack:nautobot-3.2.6-gc3.0.8 msp/nautobot:3.2.6-gc3.0.8
+```
+
+The preview runs anywhere with Docker: `docker run -d -p 8080:8080 adityanugraha/ioh-msp-stack:console-preview`,
+then open port 8080.
 
 ## Install on a server
 

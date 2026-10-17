@@ -283,7 +283,7 @@ export function TopologyView({ topo, customer, height }: { topo: Topology; custo
                 )}
               </div>
               {selected.role !== "network" && (
-                <Link to={`/customers/${customer}/devices/${selected.name}`} className="mt-2 inline-block text-primary hover:underline">
+                <Link to={`/customers/${customer}/devices/${selected.name}`} className="mt-2 inline-block text-link hover:underline">
                   Open the device page
                 </Link>
               )}

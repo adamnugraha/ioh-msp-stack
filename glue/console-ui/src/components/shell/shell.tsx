@@ -29,6 +29,55 @@ export function Logo({ className }: { className?: string }) {
   );
 }
 
+/* The operator's own logo: the deployment puts the file in branding/ and the console serves it at
+   /ui/brand/logo. The file stays out of the public repository. Without one, and always in the
+   preview, the neutral mark is shown. */
+const BRAND_LOGO = "/ui/brand/logo";
+
+function useBrandLogo(): boolean {
+  const [ok, setOk] = useState(false);
+  useEffect(() => {
+    if (DEMO) return;
+    const img = new Image();
+    img.onload = () => setOk(true);
+    img.src = BRAND_LOGO;
+  }, []);
+  return ok;
+}
+
+function BrandHeader() {
+  const logo = useBrandLogo();
+  return (
+    <div className="px-5 pb-5 pt-[max(18px,env(safe-area-inset-top))]">
+      {logo ? (
+        <>
+          <img src={BRAND_LOGO} alt="" className="mb-3 h-8 w-auto max-w-full object-contain object-left" />
+          <div className="text-[14.5px] font-semibold leading-tight text-sidebar-accent-foreground">MSP Console</div>
+          <div className="text-[11.5px] text-sidebar-muted">IOH managed services</div>
+        </>
+      ) : (
+        <div className="flex items-center gap-2.5">
+          <Logo className="size-7" />
+          <div className="leading-tight">
+            <div className="text-[14.5px] font-semibold text-sidebar-accent-foreground">MSP Console</div>
+            <div className="text-[11.5px] text-sidebar-muted">IOH managed services</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TopbarBrand() {
+  const logo = useBrandLogo();
+  return (
+    <div className="flex items-center gap-2 lg:hidden">
+      {logo ? <img src={BRAND_LOGO} alt="" className="h-6 w-auto max-w-[96px] object-contain" /> : <Logo className="size-6" />}
+      <span className="text-[14px] font-semibold">MSP Console</span>
+    </div>
+  );
+}
+
 function Nav({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <nav aria-label="Pages" className="flex flex-col gap-0.5 px-2">
@@ -75,13 +124,7 @@ function ToolHealth({ onNavigate }: { onNavigate?: () => void }) {
 function Rail({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2.5 px-5 pb-5 pt-[max(18px,env(safe-area-inset-top))]">
-        <Logo className="size-7" />
-        <div className="leading-tight">
-          <div className="text-[14.5px] font-semibold text-sidebar-accent-foreground">MSP Console</div>
-          <div className="text-[11.5px] text-sidebar-muted">IOH managed services</div>
-        </div>
-      </div>
+      <BrandHeader />
       <Nav onNavigate={onNavigate} />
       <div className="mt-auto border-t border-sidebar-border pt-4">
         <ToolHealth onNavigate={onNavigate} />
@@ -98,10 +141,7 @@ function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () => void
         <Button variant="ghost" size="icon" className="-ml-2 lg:hidden" onClick={onMenu} aria-label="Open the menu">
           <Menu />
         </Button>
-        <div className="flex items-center gap-2 lg:hidden">
-          <Logo className="size-6" />
-          <span className="text-[14px] font-semibold">MSP Console</span>
-        </div>
+        <TopbarBrand />
         <button
           type="button"
           onClick={onSearch}

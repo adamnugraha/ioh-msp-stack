@@ -97,8 +97,8 @@ export function ThemeMenu() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
         <DropdownMenuRadioGroup value={choice} onValueChange={(v) => setChoice(v as ThemeChoice)}>
-          <DropdownMenuRadioItem value="light"><Sun /> Light</DropdownMenuRadioItem>
           <DropdownMenuRadioItem value="dark"><Moon /> Dark</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="light"><Sun /> Light</DropdownMenuRadioItem>
           <DropdownMenuRadioItem value="system"><Monitor /> As the system</DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>

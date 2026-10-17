@@ -30,7 +30,7 @@ export function ToolLink({
       {icon && <ExternalLink aria-hidden className="size-3.5 shrink-0 opacity-70" />}
     </>
   );
-  const cls = cn("inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline", className);
+  const cls = cn("inline-flex items-center gap-1 text-link underline-offset-2 hover:underline", className);
   if (DEMO) {
     return (
       <button

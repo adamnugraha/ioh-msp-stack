@@ -123,7 +123,7 @@ export function CustomerOverview() {
                       <div className="text-[12px] text-muted-foreground">{a.where}</div>
                     </div>
                     {a.to && (
-                      <Link to={a.to} className="shrink-0 text-primary" aria-label="Open">
+                      <Link to={a.to} className="shrink-0 text-link" aria-label="Open">
                         <ArrowUpRight className="size-4" />
                       </Link>
                     )}
@@ -142,7 +142,7 @@ export function CustomerOverview() {
       </div>
 
       <div className="grid gap-5 lg:grid-cols-2">
-        <Section title="Planned" description="Maintenance windows and changes still to come" actions={<Link to={`/customers/${s.code}/changes`} className="text-[13px] text-primary hover:underline">All</Link>}>
+        <Section title="Planned" description="Maintenance windows and changes still to come" actions={<Link to={`/customers/${s.code}/changes`} className="text-[13px] text-link hover:underline">All</Link>}>
           {next.length ? (
             <ul className="divide-y text-[13px]">
               {next.map((n) => (
@@ -158,7 +158,7 @@ export function CustomerOverview() {
             <Empty>Nothing planned.</Empty>
           )}
         </Section>
-        <Section title="Recent console actions" actions={<Link to={`/customers/${s.code}/activity`} className="text-[13px] text-primary hover:underline">All</Link>}>
+        <Section title="Recent console actions" actions={<Link to={`/customers/${s.code}/activity`} className="text-[13px] text-link hover:underline">All</Link>}>
           {data.audit.length ? (
             <ul className="divide-y text-[13px]">
               {data.audit.slice(0, 5).map((e) => (

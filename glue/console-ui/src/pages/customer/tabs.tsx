@@ -251,7 +251,7 @@ export function CustomerActivity() {
     <Section
       title="Console actions for this customer"
       description="Who did what from the console, and what came of it"
-      actions={<Link to={`/audit?customer=${data.summary.code}`} className="text-[13px] text-primary hover:underline">Full audit trail</Link>}
+      actions={<Link to={`/audit?customer=${data.summary.code}`} className="text-[13px] text-link hover:underline">Full audit trail</Link>}
     >
       <AuditTable entries={data.audit} showCustomer={false} />
     </Section>

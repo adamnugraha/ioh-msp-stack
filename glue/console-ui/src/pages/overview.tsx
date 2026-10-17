@@ -145,11 +145,11 @@ export function OverviewPage() {
         </div>
 
         <div className="min-w-0 space-y-5">
-          <Section title="Tickets due next" description="Past due first, then by due time" actions={<Link to="/customers" className="text-[13px] text-primary hover:underline">By customer</Link>}>
+          <Section title="Tickets due next" description="Past due first, then by due time" actions={<Link to="/customers" className="text-[13px] text-link hover:underline">By customer</Link>}>
             <TicketDigest tickets={data.tickets.slice(0, 8)} customerNames={names} />
           </Section>
 
-          <Section title="Today" description="Changes planned in GLPI and maintenance windows in Zabbix" actions={<Link to="/changes" className="text-[13px] text-primary hover:underline">All changes</Link>}>
+          <Section title="Today" description="Changes planned in GLPI and maintenance windows in Zabbix" actions={<Link to="/changes" className="text-[13px] text-link hover:underline">All changes</Link>}>
             <ul className="divide-y text-[13px]">
               {data.maintenance.map((m) => (
                 <li key={m.id} className="px-4 py-2.5">

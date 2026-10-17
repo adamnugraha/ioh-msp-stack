@@ -88,8 +88,8 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
           </CommandGroup>
         )}
         <CommandGroup heading="Theme">
-          <CommandItem value="theme light" onSelect={() => run(() => setChoice("light"))}><Sun /> Light</CommandItem>
           <CommandItem value="theme dark" onSelect={() => run(() => setChoice("dark"))}><Moon /> Dark</CommandItem>
+          <CommandItem value="theme light" onSelect={() => run(() => setChoice("light"))}><Sun /> Light</CommandItem>
           <CommandItem value="theme system" onSelect={() => run(() => setChoice("system"))}><Monitor /> As the system</CommandItem>
         </CommandGroup>
       </CommandList>
