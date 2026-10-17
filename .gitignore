@@ -17,3 +17,6 @@ __pycache__/
 install.log
 caddy-root.crt
 components/grafana/plugins/
+# The operator's logo: supplied per deployment, never in this public repository
+branding/*
+!branding/README.md

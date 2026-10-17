@@ -1,0 +1,272 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* The console is dark with white text unless the page carries data-theme="light" (the theme
+   menu sets it; "as the system" follows the operating system or the page hosting the console). */
+@custom-variant dark {
+  &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) {
+    @slot;
+  }
+}
+
+/* Fonts are part of the bundle: the console's Content-Security-Policy allows nothing from outside. */
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  src: url("@fontsource-variable/archivo/files/archivo-latin-wdth-normal.woff2") format("woff2-variations");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url("@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+}
+
+/* ------------------------------------------------------------------ tokens: dark (the default) */
+:root {
+  color-scheme: dark;
+  --radius: 0.5rem;
+
+  --background: #0b1118;
+  --foreground: #f2f5f9;
+  --card: #131a22;
+  --card-foreground: #f2f5f9;
+  --popover: #18212b;
+  --popover-foreground: #f2f5f9;
+  /* buttons: white text on a blue deep enough to carry it */
+  --primary: #2f7ce0;
+  --primary-foreground: #ffffff;
+  /* text links: a lighter blue that reads well on the dark cards */
+  --link: #7db6ff;
+  --secondary: #1d2733;
+  --secondary-foreground: #f2f5f9;
+  --muted: #19222c;
+  --muted-foreground: #b2bdca;
+  --accent: #1d2a3b;
+  --accent-foreground: #f2f5f9;
+  --destructive: #f0796c;
+  --border: #263243;
+  --input: #324154;
+  --ring: #7db6ff;
+
+  /* the left rail stays navy, a step apart from the page */
+  --sidebar: #0c1a30;
+  --sidebar-foreground: #e4ebf4;
+  --sidebar-muted: #97a9c3;
+  --sidebar-primary: #ffffff;
+  --sidebar-primary-foreground: #0c1a30;
+  --sidebar-accent: #18294a;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #1c2f50;
+  --sidebar-ring: #5b9ef5;
+
+  /* status in tables and pills: text colour on a tinted ground, always with an icon or a word */
+  --ok: #74d9a2;
+  --ok-bg: #12301f;
+  --warn: #f3ba62;
+  --warn-bg: #35270e;
+  --bad: #ff958b;
+  --bad-bg: #3a1714;
+  --info: #94c4ff;
+  --info-bg: #132640;
+  --neutral: #bac5d1;
+  --neutral-bg: #1e2833;
+
+  /* Zabbix severity colours, as engineers know them from Zabbix itself */
+  --sev-0: #97aab3;
+  --sev-1: #7499ff;
+  --sev-2: #ffc859;
+  --sev-3: #ffa059;
+  --sev-4: #e97659;
+  --sev-5: #e45959;
+
+  /* charts (checked with the palette validator against --card) */
+  --chart-surface: #131a22;
+  --chart-grid: #222c38;
+  --chart-axis: #344152;
+  --chart-label: #a9b5c3;
+  --chart-ink: #f2f5f9;
+  --chart-muted: #4d5a6a;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+  --meter-track: #184f95;
+
+  --preview: #3a300f;
+  --preview-foreground: #f9e3a0;
+  --preview-border: #5c4c17;
+}
+
+/* ------------------------------------------------------------------ tokens: light (from the theme menu) */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background: #f3f5f8;
+  --foreground: #16212c;
+  --card: #ffffff;
+  --card-foreground: #16212c;
+  --popover: #ffffff;
+  --popover-foreground: #16212c;
+  --primary: #1764c7;
+  --primary-foreground: #ffffff;
+  --link: #1764c7;
+  --secondary: #e8edf3;
+  --secondary-foreground: #16212c;
+  --muted: #eef1f5;
+  --muted-foreground: #556373;
+  --accent: #e6eef9;
+  --accent-foreground: #0f2a4e;
+  --destructive: #c4321f;
+  --border: #dbe1e8;
+  --input: #cbd4de;
+  --ring: #1764c7;
+  --sidebar: #0f2342;
+  --sidebar-foreground: #d3deec;
+  --sidebar-muted: #8ea2bf;
+  --sidebar-primary: #ffffff;
+  --sidebar-primary-foreground: #0f2342;
+  --sidebar-accent: #1b355c;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #223c63;
+  --sidebar-ring: #7fb2f5;
+  --ok: #136b41;
+  --ok-bg: #e1f3e8;
+  --warn: #8a5300;
+  --warn-bg: #fcefd5;
+  --bad: #b3261b;
+  --bad-bg: #fde6e3;
+  --info: #1d5aa6;
+  --info-bg: #e3edfa;
+  --neutral: #556373;
+  --neutral-bg: #eceff3;
+  --chart-surface: #ffffff;
+  --chart-grid: #e6eaef;
+  --chart-axis: #c5ced8;
+  --chart-label: #6b7886;
+  --chart-ink: #16212c;
+  --chart-muted: #a7b1bc;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --meter-track: #cde2fb;
+  --preview: #fff4cc;
+  --preview-foreground: #5c4300;
+  --preview-border: #f0d77a;
+}
+
+@theme inline {
+  --font-sans: "Archivo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-link: var(--link);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-ok: var(--ok);
+  --color-ok-bg: var(--ok-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-bad: var(--bad);
+  --color-bad-bg: var(--bad-bg);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+  --color-neutral: var(--neutral);
+  --color-neutral-bg: var(--neutral-bg);
+  --color-preview: var(--preview);
+  --color-preview-foreground: var(--preview-foreground);
+  --color-preview-border: var(--preview-border);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.45;
+    font-stretch: 96%;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1,
+  h2,
+  h3 {
+    font-stretch: 104%;
+    letter-spacing: -0.005em;
+  }
+  code,
+  kbd,
+  pre {
+    font-family: var(--font-mono);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* Page side gutters: at least 16px, more where the phone has a notch or rounded corners. */
+  .gutter {
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+  }
+  @media (min-width: 768px) {
+    .gutter {
+      padding-left: max(24px, env(safe-area-inset-left));
+      padding-right: max(24px, env(safe-area-inset-right));
+    }
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+  .scroll-x {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+}
