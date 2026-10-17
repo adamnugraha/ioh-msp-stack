@@ -282,6 +282,10 @@ stage_preflight() {
     if reaches "$host"; then ok "reaches $host"
     else bad "cannot reach https://$host" "allow HTTPS to it in the firewall, or export HTTPS_PROXY=http://<proxy>:<port>"; fi
   done
+  # Debian security updates for the Nautobot image: the build goes on without them.
+  if reaches deb.debian.org; then ok "reaches deb.debian.org"
+  else warn "cannot reach https://deb.debian.org: the Nautobot image will build without the latest Debian security updates" \
+    "allow HTTPS to deb.debian.org in the firewall (or through the proxy), then run ./scripts/install.sh images again"; fi
   # Needed later: grafana.com for customer dashboards, quay.io for single sign-on (Keycloak), ghcr.io for
   # chat alerts (Versus Incident; its image layers come from pkg-containers.githubusercontent.com).
   for host in grafana.com quay.io ghcr.io pkg-containers.githubusercontent.com; do

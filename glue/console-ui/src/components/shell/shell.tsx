@@ -30,14 +30,15 @@ export function Logo({ className }: { className?: string }) {
 }
 
 /* The operator's own logo: the deployment puts the file in branding/ and the console serves it at
-   /ui/brand/logo. The file stays out of the public repository. Without one, and always in the
-   preview, the neutral mark is shown. */
-const BRAND_LOGO = "/ui/brand/logo";
+   /ui/brand/logo. The file stays out of the public repository. Without one the neutral mark is shown.
+   The preview asks for a logo only when it is built with VITE_BRAND_LOGO (the Docker preview image
+   sets ./brand/logo, served from a mounted folder); the plain preview build never makes the request. */
+const BRAND_LOGO: string | null = import.meta.env.VITE_BRAND_LOGO || (DEMO ? null : "/ui/brand/logo");
 
 function useBrandLogo(): boolean {
   const [ok, setOk] = useState(false);
   useEffect(() => {
-    if (DEMO) return;
+    if (!BRAND_LOGO) return;
     const img = new Image();
     img.onload = () => setOk(true);
     img.src = BRAND_LOGO;
@@ -51,7 +52,7 @@ function BrandHeader() {
     <div className="px-5 pb-5 pt-[max(18px,env(safe-area-inset-top))]">
       {logo ? (
         <>
-          <img src={BRAND_LOGO} alt="" className="mb-3 h-8 w-auto max-w-full object-contain object-left" />
+          <img src={BRAND_LOGO ?? undefined} alt="" className="mb-3 h-8 w-auto max-w-full object-contain object-left" />
           <div className="text-[14.5px] font-semibold leading-tight text-sidebar-accent-foreground">MSP Console</div>
           <div className="text-[11.5px] text-sidebar-muted">IOH managed services</div>
         </>
@@ -72,7 +73,7 @@ function TopbarBrand() {
   const logo = useBrandLogo();
   return (
     <div className="flex items-center gap-2 lg:hidden">
-      {logo ? <img src={BRAND_LOGO} alt="" className="h-6 w-auto max-w-[96px] object-contain" /> : <Logo className="size-6" />}
+      {logo ? <img src={BRAND_LOGO ?? undefined} alt="" className="h-6 w-auto max-w-[96px] object-contain" /> : <Logo className="size-6" />}
       <span className="text-[14px] font-semibold">MSP Console</span>
     </div>
   );

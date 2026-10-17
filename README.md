@@ -118,7 +118,8 @@ docker tag adityanugraha/ioh-msp-stack:nautobot-3.2.6-gc3.0.8 msp/nautobot:3.2.6
 ```
 
 The preview runs anywhere with Docker: `docker run -d -p 8080:8080 adityanugraha/ioh-msp-stack:console-preview`,
-then open port 8080.
+then open port 8080. To show your logo in it, add `-v /opt/ioh-msp-stack/branding:/usr/share/nginx/html/brand:ro`
+(see `branding/README.md`).
 
 ## Install on a server
 
@@ -283,5 +284,10 @@ After editing `glue/mappings.yaml` or the msp-glue code, rebuild or restart it:
 * Versus Incident's message templates know a limited set of functions (`int` is missing, for example);
   the kit's templates use only what the tested 1.4.13 offers. Teams turns each line with a link into
   one clickable block, so the Teams template puts one link per line.
+* The Nautobot base image (`networktocode/nautobot:3.2.6-py3.12`) lags Debian's security updates. The
+  kit's Nautobot image applies them while it builds (best effort: the preflight warns when
+  deb.debian.org cannot be reached). Trivy still reports four HIGH findings in msgpack, urllib3 and
+  setuptools: these are copies that pip bundles inside itself, used only while pip runs, and they clear
+  when pip updates its bundled copies.
 * Versus Incident 1.4 releases add AI and enterprise features quickly. The kit uses only its alert
   path, with the agent, queues and on-call switched off; test a newer `VERSUS_IMAGE` in a lab first.

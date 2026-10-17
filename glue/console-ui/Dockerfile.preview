@@ -3,6 +3,9 @@
 #
 #   docker build -f Dockerfile.preview -t ioh-msp-stack:console-preview .
 #   docker run -d -p 8080:8080 ioh-msp-stack:console-preview      then open http://<server>:8080
+#
+# With your logo (branding/logo.svg or logo.png, readable by everyone; see branding/README.md):
+#   docker run -d -p 8080:8080 -v /opt/ioh-msp-stack/branding:/usr/share/nginx/html/brand:ro ioh-msp-stack:console-preview
 
 FROM node:22-alpine AS build
 WORKDIR /src
@@ -13,7 +16,8 @@ ENV NODE_EXTRA_CA_CERTS=/usr/local/share/extra-ca.pem
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
-RUN npm run build:demo
+# The image's page asks this server for a logo; nothing mounted means the neutral mark.
+RUN VITE_BRAND_LOGO=./brand/logo npm run build:demo
 
 FROM nginxinc/nginx-unprivileged:1.30-alpine
 LABEL org.opencontainers.image.title="MSP Console preview" \

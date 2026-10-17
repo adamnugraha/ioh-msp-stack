@@ -17,6 +17,10 @@ The only differences between them are in `src/lib/api/index.ts` (which data sour
 and `src/main.tsx` (the preview keeps its page addresses in memory, because the page hosting it gives
 it no address of its own; the kit uses real addresses, so links in chat alerts open the right page).
 
+`Dockerfile.preview` builds the preview into a small web server image (port 8080). It sets
+`VITE_BRAND_LOGO=./brand/logo`, so that image shows the operator's logo from a mounted `branding/`
+folder; a plain `npm run build:demo` never asks for a logo.
+
 ## Where things are
 
 | Path | What it holds |
