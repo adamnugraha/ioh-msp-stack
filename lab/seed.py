@@ -143,3 +143,41 @@ for name, code, site, role, platform, dtype, st, container, serial in devices:
                data=json.dumps({"ip_address": ip["id"], "interface": iface["id"]})).raise_for_status()
     S.patch(API + f"dcim/devices/{dev['id']}/", data=json.dumps({"primary_ip4": ip["id"]})).raise_for_status()
     print(f"device {name}: {address}")
+
+# ------------------------------------------------- cables and circuits (the console's network map)
+# The WAN port of each router ends on an IOH circuit; at ACME HQ the router's LAN port is cabled to the server.
+provider = ensure("circuits/providers/", {"name": "Indosat Ooredoo Hutchison"}, {"name": "Indosat Ooredoo Hutchison"})
+mpls = ensure("circuits/circuit-types/", {"name": "MPLS VPN"}, {"name": "MPLS VPN"})
+by_name = {d["name"]: d for d in get("dcim/devices/", limit=100)}
+
+
+def port(device, name, kind, speed, description):
+    return ensure("dcim/interfaces/", {"device": by_name[device]["id"], "name": name}, {
+        "device": by_name[device]["id"], "name": name, "type": kind, "status": status["Active"], "speed": speed,
+        "description": description})
+
+
+def cable(a_type, a_id, b_type, b_id):
+    if get("dcim/cables/", termination_a_id=a_id) or get("dcim/cables/", termination_b_id=a_id):
+        return
+    r = S.post(API + "dcim/cables/", data=json.dumps({
+        "termination_a_type": a_type, "termination_a_id": a_id, "termination_b_type": b_type, "termination_b_id": b_id,
+        "status": status["Connected"]}))
+    if r.status_code >= 400:
+        raise SystemExit(f"cable failed: {r.status_code} {r.text}")
+
+
+for device, code, site, cid, rate in (("jkt01-rtr01", "acme", "acme-hq", "IOH-MPLS-ACME-0001", 100000),
+                                       ("ckr01-rtr01", "bankx", "bankx-dc", "IOH-MPLS-BANKX-0001", 1000000)):
+    wan = port(device, "GigabitEthernet0/0/0", "1000base-t", 1000000, "WAN to IOH")
+    circuit = ensure("circuits/circuits/", {"cid": cid}, {
+        "cid": cid, "provider": provider["id"], "circuit_type": mpls["id"], "status": status["Active"],
+        "tenant": tenant_ids[code], "commit_rate": rate})
+    end = ensure("circuits/circuit-terminations/", {"circuit": circuit["id"], "term_side": "A"}, {
+        "circuit": circuit["id"], "term_side": "A", "location": sites[site]["id"]})
+    cable("dcim.interface", wan["id"], "circuits.circuittermination", end["id"])
+    print(f"circuit {cid}: {device} GigabitEthernet0/0/0")
+lan = port("jkt01-rtr01", "GigabitEthernet0/0/1", "1000base-t", 1000000, "LAN, server room")
+eth0 = port("jkt01-srv01", "eth0", "1000base-t", 1000000, "")
+cable("dcim.interface", lan["id"], "dcim.interface", eth0["id"])
+print("cable: jkt01-rtr01 GigabitEthernet0/0/1 to jkt01-srv01 eth0")

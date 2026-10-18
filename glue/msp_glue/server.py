@@ -27,15 +27,15 @@ import time
 
 from fastapi import FastAPI, HTTPException, Request
 
-from . import changes, compliance, devices, tenants
+from . import changes, compliance, devices, sso_tools, tenants
 from .common import DEVICE_FIELDS, TENANT_FIELDS
 from .locking import exclusive
 from .settings import settings
 
 log = logging.getLogger("msp_glue.server")
-app = FastAPI(title="msp-glue", version="1.1")
+app = FastAPI(title="msp-glue", version="1.2")
 _jobs: "queue.Queue[tuple[dict, callable, tuple]]" = queue.Queue()
-_state = {"last_reconcile": None, "last_error": None}
+_state = {"last_reconcile": None, "last_error": None, "last_error_at": None}
 _history: "collections.deque[dict]" = collections.deque(maxlen=50)
 _ids = itertools.count(1)
 # Jobs whose work a full reconcile does again (job names start with these words).
@@ -46,6 +46,26 @@ def _now() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _set_error(message: str | None) -> None:
+    """The last error and when it happened (the MSP Console shows both)."""
+    if message != _state["last_error"]:
+        _state["last_error_at"] = _now() if message else None
+    _state["last_error"] = message
+
+
+def describe(result) -> str:
+    """A job's result in words for the job list (the MSP Console shows it): no Python notation."""
+    if result is None:
+        return ""
+    if hasattr(result, "summary"):
+        return result.summary()
+    if isinstance(result, dict):
+        return ", ".join(f"{str(k).removeprefix('msp_').replace('_', ' ')} {v}" for k, v in result.items())
+    if isinstance(result, (list, tuple, set)):
+        return ", ".join(str(x) for x in result)
+    return str(result)
+
+
 def _worker() -> None:
     while True:
         record, func, args = _jobs.get()
@@ -54,12 +74,12 @@ def _worker() -> None:
         try:
             with exclusive():
                 result = func(*args)
-            record.update(status="done", result=str(result)[:500])
+            record.update(status="done", result=describe(result)[:500])
             if (_state["last_error"] or "").startswith(record["name"] + ":"):
-                _state["last_error"] = None   # the same job went through this time
+                _set_error(None)   # the same job went through this time
             log.info("Job %s done in %.1fs: %s", record["name"], time.time() - started, result)
         except Exception as exc:  # noqa: BLE001
-            _state["last_error"] = f"{record['name']}: {exc}"
+            _set_error(f"{record['name']}: {exc}")
             record.update(status="failed", result=f"{type(exc).__name__}: {exc}"[:500])
             log.exception("Job %s failed", record["name"])
         finally:
@@ -92,14 +112,18 @@ def reconcile() -> str:
     for tenant in tenants.managed_tenants():
         tenants.ensure_tenant(tenant)
     report = devices.sync_all()
+    try:
+        sso_tools.sync_semaphore_members()   # staff project memberships, when Semaphore signs in through Keycloak
+    except Exception as exc:  # noqa: BLE001 - never stops the device sync
+        report.errors.append(f"Semaphore memberships: {exc}"[:300])
     _state["last_reconcile"] = time.strftime("%Y-%m-%d %H:%M:%S")
     # A full sync repairs what earlier sync jobs left undone, so their error is no longer open. Errors of
     # other jobs (compliance, GLPI changes) stay until their own job succeeds or fails again.
     if report.errors:
         # Not "reconcile: ...": the worker clears that form as soon as this job returns.
-        _state["last_error"] = f"reconcile found {len(report.errors)} device error(s), first: {report.errors[0]}"[:500]
+        _set_error(f"reconcile found {len(report.errors)} device error(s), first: {report.errors[0]}"[:500])
     elif (_state["last_error"] or "").startswith(SYNC_JOBS):
-        _state["last_error"] = None
+        _set_error(None)
     return report.summary()
 
 

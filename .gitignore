@@ -20,3 +20,5 @@ components/grafana/plugins/
 # The operator's logo: supplied per deployment, never in this public repository
 branding/*
 !branding/README.md
+# The console's built pages: made from glue/console-ui by "npm run build" or the image build
+glue/msp_glue/console/ui/

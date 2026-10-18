@@ -15,10 +15,11 @@ Roles
 from __future__ import annotations
 
 import logging
+import os
 import secrets as pysecrets
 
 from .clients.keycloak import Keycloak
-from .http import APIError
+from .http import APIError, make_session
 from .settings import settings
 
 log = logging.getLogger("msp_glue.sso")
@@ -100,6 +101,123 @@ def setup(admin_password: str) -> dict:
     log.info("Keycloak realm %s ready: console at %s", settings.keycloak_realm, base)
     return {"realm": settings.keycloak_realm, "console": base, "issuer": f"{settings.public_url('keycloak')}/realms/"
             f"{settings.keycloak_realm}"}
+
+
+# =============================================================================
+# Single sign-on into the tools ("mspctl sso tools", ./scripts/install.sh sso-tools)
+# =============================================================================
+# tool -> where Keycloak sends the browser back, and where the tool's sign-out lands. Each tool keeps its
+# own local log-in as well, for the platform's service accounts and as a way in when Keycloak is down.
+TOOL_CLIENTS = {
+    "grafana": {"name": "Grafana", "public": "grafana", "callback": "/login/generic_oauth", "home": "/login"},
+    "forgejo": {"name": "Forgejo", "public": "forgejo", "callback": "/user/oauth2/keycloak/callback", "home": "/"},
+    "nautobot": {"name": "Nautobot", "public": "nautobot", "callback": "/complete/keycloak/", "home": "/"},
+    "semaphore": {"name": "Semaphore", "public": "semaphore", "callback": "/api/auth/oidc/keycloak/redirect",
+                  "home": "/"},
+    "zabbix": {"name": "Zabbix", "public": "zabbix", "callback": "/index_sso.php?acs", "home": "/"},
+}
+ROLE_CLAIM = {
+    "name": "realm roles", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-realm-role-mapper",
+    "config": {"multivalued": "true", "claim.name": "roles", "jsonType.label": "String",
+               "id.token.claim": "true", "access.token.claim": "true", "userinfo.token.claim": "true"},
+}
+
+
+def tool_secret(tool: str) -> str:
+    return os.environ.get(f"KEYCLOAK_{tool.upper()}_CLIENT_SECRET", "")
+
+
+def setup_tools(admin_password: str, tools: list[str]) -> dict:
+    """Keycloak clients for the tools, so staff sign in to them with their Keycloak account. Safe to run again."""
+    unknown = [t for t in tools if t not in TOOL_CLIENTS]
+    if unknown:
+        raise APIError(f"no single sign-on for {', '.join(unknown)}; choose from {', '.join(TOOL_CLIENTS)}")
+    kc = Keycloak.admin_login(settings.keycloak_url, admin_password, realm=settings.keycloak_realm)
+    done = {}
+    for tool in tools:
+        spec = TOOL_CLIENTS[tool]
+        base = settings.public_url(spec["public"])
+        if tool == "zabbix":
+            done[tool] = _saml_client(kc, base)
+            continue
+        secret = tool_secret(tool)
+        if not secret:
+            raise APIError(f"KEYCLOAK_{tool.upper()}_CLIENT_SECRET is empty (./scripts/install.sh sso-tools sets it)")
+        callback = base + spec["callback"]
+        client = kc.ensure_client({
+            "clientId": tool, "name": spec["name"], "enabled": True, "protocol": "openid-connect",
+            "publicClient": False, "secret": secret, "standardFlowEnabled": True, "implicitFlowEnabled": False,
+            "directAccessGrantsEnabled": False, "serviceAccountsEnabled": False, "frontchannelLogout": True,
+            # Some tools add a trailing slash to the address they send back to; both are allowed.
+            "redirectUris": sorted({callback, callback.rstrip("/"), callback.rstrip("/") + "/"}),
+            "webOrigins": [base], "rootUrl": base, "baseUrl": spec["home"],
+            "attributes": {"post.logout.redirect.uris": f"{base}/*"},
+        })
+        kc.ensure_protocol_mapper(client["id"], ROLE_CLAIM)
+        if tool == "nautobot":
+            # Nautobot reads the access token: it must be issued for Nautobot and name the staff groups, which
+            # Nautobot's group sync turns into its own groups of the same names.
+            kc.ensure_protocol_mapper(client["id"], {
+                "name": "audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper",
+                "config": {"included.client.audience": tool, "access.token.claim": "true", "id.token.claim": "false"},
+            })
+            kc.ensure_protocol_mapper(client["id"], {
+                "name": "groups", "protocol": "openid-connect", "protocolMapper": "oidc-group-membership-mapper",
+                "config": {"claim.name": "groups", "full.path": "false", "access.token.claim": "true",
+                           "id.token.claim": "true", "userinfo.token.claim": "true"},
+            })
+        done[tool] = callback
+    return done
+
+
+def _saml_client(kc: Keycloak, base: str) -> str:
+    """Zabbix signs staff in with SAML: Keycloak signs the assertion, Zabbix provisions the account from it."""
+    acs, sls = f"{base}/index_sso.php?acs", f"{base}/index_sso.php?sls"
+    client = kc.ensure_client({
+        "clientId": "zabbix", "name": "Zabbix", "enabled": True, "protocol": "saml", "frontchannelLogout": True,
+        "redirectUris": [acs, f"{base}/*"], "rootUrl": base, "baseUrl": "/",
+        "attributes": {
+            "saml.assertion.signature": "true", "saml.server.signature": "true", "saml.client.signature": "false",
+            "saml.signature.algorithm": "RSA_SHA256", "saml_force_name_id_format": "true",
+            "saml_name_id_format": "username", "saml.authnstatement": "true",
+            "saml_assertion_consumer_url_post": acs, "saml_assertion_consumer_url_redirect": acs,
+            "saml_single_logout_service_url_redirect": sls, "post.logout.redirect.uris": f"{base}/*",
+        },
+    })
+    # Keycloak's default "role_list" scope sends one Role attribute per role, and Zabbix refuses an assertion that
+    # repeats an attribute: this client sends the roles in one attribute of its own instead.
+    for scope in kc.request("GET", f"clients/{client['id']}/default-client-scopes") or []:
+        if scope.get("name") == "role_list":
+            kc.request("DELETE", f"clients/{client['id']}/default-client-scopes/{scope['id']}")
+    for name, mapper, config in (
+        # One Role attribute holding every role
+        ("roles", "saml-role-list-mapper", {"attribute.name": "Role", "single": "true",
+                                           "attribute.nameformat": "Basic", "friendly.name": "Role"}),
+        # Zabbix names the account after this attribute (the Keycloak log-in, the staff member's e-mail address)
+        ("username", "saml-user-property-mapper", {"user.attribute": "username", "attribute.name": "username",
+                                                  "attribute.nameformat": "Basic"}),
+        ("email", "saml-user-property-mapper", {"user.attribute": "email", "attribute.name": "email",
+                                               "attribute.nameformat": "Basic"}),
+        ("first name", "saml-user-property-mapper", {"user.attribute": "firstName", "attribute.name": "firstName",
+                                                    "attribute.nameformat": "Basic"}),
+        ("last name", "saml-user-property-mapper", {"user.attribute": "lastName", "attribute.name": "lastName",
+                                                   "attribute.nameformat": "Basic"}),
+    ):
+        kc.ensure_protocol_mapper(client["id"], {"name": name, "protocol": "saml", "protocolMapper": mapper,
+                                                 "config": config})
+    return acs
+
+
+def realm_keys() -> dict:
+    """The realm's public signing key and certificate (what Nautobot and Zabbix check signatures with)."""
+    session = make_session()
+    base = f"{settings.keycloak_url.rstrip('/')}/realms/{settings.keycloak_realm}"
+    realm = session.get(base, timeout=15)
+    realm.raise_for_status()
+    certs = session.get(f"{base}/protocol/openid-connect/certs", timeout=15)
+    certs.raise_for_status()
+    signing = next((k for k in certs.json().get("keys", []) if k.get("use") == "sig" and k.get("alg") == "RS256"), None)
+    return {"public_key": realm.json()["public_key"], "certificate": (signing or {}).get("x5c", [""])[0]}
 
 
 # =============================================================================

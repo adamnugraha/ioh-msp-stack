@@ -23,6 +23,10 @@ FROM nginxinc/nginx-unprivileged:1.30-alpine
 LABEL org.opencontainers.image.title="MSP Console preview" \
       org.opencontainers.image.description="Clickable preview of the MSP Console with sample data" \
       org.opencontainers.image.source="https://github.com/adamnugraha/ioh-msp-stack"
+# Alpine's fixes that came out after the base image was built (libexpat in October 2026, for example)
+USER root
+RUN apk upgrade --no-cache
+USER 101
 COPY docker/preview-nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /src/dist-demo/index.html /usr/share/nginx/html/index.html
 EXPOSE 8080

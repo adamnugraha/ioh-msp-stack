@@ -1,9 +1,20 @@
-{% extends "base.html" %}
-{% block title %}{{ title }}{% endblock %}
-{% block main %}
-<section class="card message">
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>{{ title }} · MSP Console</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/message.css?v={{ version }}">
+</head>
+<body>
+<main class="card">
+  <p class="brand"><img src="/static/icon.svg" alt="" width="22" height="22"><span>MSP Console</span></p>
   <h1>{{ title }}</h1>
   <p>{{ message }}</p>
-  {% if retry %}<p><a class="btn primary" href="{{ retry }}">{{ retry_label or 'Try again' }}</a></p>{% endif %}
-</section>
-{% endblock %}
+  {% if retry %}<p><a class="btn" href="{{ retry }}">{{ retry_label or 'Try again' }}</a></p>{% endif %}
+</main>
+<footer>MSP Console {{ version }}</footer>
+</body>
+</html>

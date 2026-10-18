@@ -43,6 +43,13 @@ services:
       POSTGRES_USER: zabbix
       POSTGRES_PASSWORD: ${ZABBIX_DB_PASSWORD}
       PHP_TZ: ${TZ}
+      # Single sign-on (SAML) through Keycloak, once "./scripts/install.sh sso-tools zabbix" has run: it saves
+      # Keycloak's signing certificate as secrets/platform/sso/idp.crt, and Zabbix checks every sign-in against it.
+      # Caddy ends TLS in front of Zabbix, so the SAML addresses are built from its forwarded headers.
+      ZBX_SSO_IDP_CERT: /etc/zabbix/web/certs/idp.crt
+      ZBX_SSO_SETTINGS: '{"strict": true, "baseurl": "https://zabbix.${MSP_DOMAIN}/", "use_proxy_headers": true}'
+    volumes:
+      - ../../secrets/platform/sso:/etc/zabbix/web/certs:ro
     depends_on:
       - zabbix-server
     healthcheck:

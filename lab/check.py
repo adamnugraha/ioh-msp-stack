@@ -375,6 +375,25 @@ def console():
     return ok, f"healthz {health.status_code}, sign-in {login.status_code} to {where.split('?')[0]}"
 
 
+@check("Single sign-on into the tools sends staff to Keycloak")
+def sso_tools():
+    tools = [t for t in ENV.get("SSO_TOOLS", "").split(",") if t]
+    if not tools:
+        return True, "skipped (SSO_TOOLS is empty: ./scripts/install.sh sso-tools)"
+    keycloak = f"https://sso.{ENV['MSP_DOMAIN']}/realms/msp/protocol/"
+    starts = {"grafana": "http://localhost:8087/login/generic_oauth", "forgejo": "http://localhost:8085/user/oauth2/keycloak",
+              "semaphore": "http://localhost:8084/api/auth/oidc/keycloak/login", "zabbix": "http://localhost:8082/index_sso.php"}
+    seen = {}
+    for tool in tools:
+        if tool == "nautobot":   # the button posts a form: the log-in page offers it
+            page = requests.get("http://localhost:8081/login/", timeout=20).text
+            seen[tool] = "login/keycloak" in page
+            continue
+        r = requests.get(starts[tool], allow_redirects=False, timeout=20)
+        seen[tool] = r.status_code in (302, 303, 307) and r.headers.get("location", "").startswith(keycloak)
+    return all(seen.values()), ", ".join(f"{tool} {'to Keycloak' if ok else 'NOT to Keycloak'}" for tool, ok in seen.items())
+
+
 @check("Chat alerts: Versus delivers a test message")
 def chat_test():
     if "chat" not in ENV.get("COMPOSE_PROFILES", "").split(","):
@@ -385,7 +404,7 @@ def chat_test():
 
 ALL = (connectivity, tenants_provisioned, zabbix_hosts, glpi_assets, zabbix_permissions, webhook_device,
        golden_config, drift_ticket, change_automation, customer_portal_user, alert_to_ticket, grafana_isolation,
-       console, chat_test)
+       console, sso_tools, chat_test)
 
 if __name__ == "__main__":
     # python3 lab/check.py                       run every check

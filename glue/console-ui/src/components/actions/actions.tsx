@@ -36,6 +36,8 @@ export interface Actions {
   configCheck: (customer: string, name: string) => void;
   canAct: boolean;
   canRun: boolean;
+  /** engineer, and the console has a model endpoint for Investigate */
+  canInvestigate: boolean;
 }
 
 const ActionsContext = createContext<Actions | null>(null);
@@ -46,6 +48,7 @@ export function ActionsProvider({ children }: { children: ReactNode }) {
   const [investigating, setInvestigating] = useState<Problem | null>(null);
   const canAct = Boolean(me?.canAct);
   const canRun = Boolean(me?.canRun);
+  const canInvestigate = canAct && Boolean(me?.investigate);
 
   const engineer = useCallback(
     (what: string, then: () => void) => {
@@ -59,8 +62,14 @@ export function ActionsProvider({ children }: { children: ReactNode }) {
     () => ({
       canAct,
       canRun,
+      canInvestigate,
       acknowledge: (problem) => engineer("Acknowledging problems", () => setOpen({ kind: "ack", problem })),
-      investigate: (problem) => engineer("Investigating problems", () => setInvestigating(problem)),
+      investigate: (problem) =>
+        engineer("Investigating problems", () =>
+          canInvestigate
+            ? setInvestigating(problem)
+            : toast.error("Investigate is switched off: an administrator sets a model endpoint (CONSOLE_AI_URL) for it."),
+        ),
       playbook: (init) => (canRun ? setOpen({ kind: "playbook", init }) : toast.error("Starting playbooks needs the automation role.")),
       ticket: (init = {}) => engineer("Opening tickets", () => setOpen({ kind: "ticket", init })),
       maintenance: (init = {}) => engineer("Planning maintenance", () => setOpen({ kind: "maintenance", init })),
@@ -68,7 +77,7 @@ export function ActionsProvider({ children }: { children: ReactNode }) {
       resync: (customer, name) => engineer("Re-syncing customers", () => setOpen({ kind: "resync", customer, name })),
       configCheck: (customer, name) => engineer("Starting a configuration check", () => setOpen({ kind: "config", customer, name })),
     }),
-    [canAct, canRun, engineer],
+    [canAct, canRun, canInvestigate, engineer],
   );
 
   const close = () => setOpen(null);

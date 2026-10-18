@@ -49,9 +49,12 @@ CREATE TABLE IF NOT EXISTS sessions (
     refresh    TEXT NOT NULL DEFAULT '',
     created    REAL NOT NULL,
     checked    REAL NOT NULL,
-    expires    REAL NOT NULL
+    expires    REAL NOT NULL,
+    address    TEXT NOT NULL DEFAULT ''
 );
 """
+# Columns added after 1.1: (table, column, definition)
+MIGRATIONS = [("sessions", "address", "TEXT NOT NULL DEFAULT ''")]
 
 
 def path():
@@ -68,6 +71,10 @@ def _db():
                 with sqlite3.connect(path()) as conn:
                     conn.execute("PRAGMA journal_mode=WAL")
                     conn.executescript(SCHEMA)
+                    for table, column, definition in MIGRATIONS:
+                        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+                        if column not in have:
+                            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
                 _ready = True
     conn = sqlite3.connect(path(), timeout=10)
     conn.row_factory = sqlite3.Row
@@ -103,6 +110,12 @@ def update(entry_id: int, outcome: str, result: str | None = None, detail: dict 
                       time.time(), entry_id))
 
 
+def set_ticket(entry_id: int, reference: str) -> None:
+    """The ticket or change an entry is about, once the tool has given it a number."""
+    with _db() as conn:
+        conn.execute("UPDATE audit SET ticket = ? WHERE id = ?", (reference, entry_id))
+
+
 def _row(r: sqlite3.Row) -> dict:
     out = dict(r)
     out["at"] = datetime.fromtimestamp(r["at"], tz())
@@ -112,9 +125,9 @@ def _row(r: sqlite3.Row) -> dict:
 
 
 def entries(limit: int = 200, customer: str = "", email: str = "", action: str = "",
-            since: float | None = None) -> list[dict]:
+            since: float | None = None, outcome: str = "") -> list[dict]:
     query, args = "SELECT * FROM audit WHERE 1=1", []
-    for column, value in (("customer", customer), ("email", email), ("action", action)):
+    for column, value in (("customer", customer), ("email", email), ("action", action), ("outcome", outcome)):
         if value:
             query += f" AND {column} = ?"
             args.append(value)
@@ -136,7 +149,7 @@ def unfinished(action: str, max_age: float) -> list[dict]:
 
 
 def distinct(column: str) -> list[str]:
-    assert column in ("email", "action", "customer")
+    assert column in ("email", "action", "customer", "outcome")
     with _db() as conn:
         return [r[0] for r in conn.execute(f"SELECT DISTINCT {column} FROM audit WHERE {column} != '' ORDER BY 1")]
 
@@ -144,15 +157,15 @@ def distinct(column: str) -> list[str]:
 # =============================================================================
 # Sessions
 # =============================================================================
-def save_session(sid: str, user: dict, id_token: str, refresh: str, expires: float) -> None:
+def save_session(sid: str, user: dict, id_token: str, refresh: str, expires: float, address: str = "") -> None:
     now = time.time()
     with _db() as conn:
         conn.execute("DELETE FROM sessions WHERE expires < ?", (now,))
         conn.execute(
-            "INSERT OR REPLACE INTO sessions (sid, sub, email, name, roles, id_token, refresh, created, checked, expires)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO sessions (sid, sub, email, name, roles, id_token, refresh, created, checked, expires,"
+            " address) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (sid, user["sub"], user["email"], user["name"], json.dumps(user["roles"]), id_token, refresh, now, now,
-             expires))
+             expires, address[:120]))
 
 
 def load_session(sid: str) -> dict | None:
@@ -187,8 +200,9 @@ def delete_session(sid: str) -> None:
 
 def active_sessions() -> list[dict]:
     with _db() as conn:
-        rows = conn.execute("SELECT email, name, roles, created, checked FROM sessions WHERE expires > ?"
-                            " ORDER BY checked DESC", (time.time(),)).fetchall()
+        rows = conn.execute("SELECT email, name, roles, created, checked, expires, address FROM sessions"
+                            " WHERE expires > ? ORDER BY checked DESC", (time.time(),)).fetchall()
     return [{"email": r["email"], "name": r["name"], "roles": json.loads(r["roles"] or "[]"),
-             "created": datetime.fromtimestamp(r["created"], tz()), "checked": datetime.fromtimestamp(r["checked"], tz())}
+             "created": datetime.fromtimestamp(r["created"], tz()), "checked": datetime.fromtimestamp(r["checked"], tz()),
+             "expires": datetime.fromtimestamp(r["expires"], tz()), "address": r["address"] or ""}
             for r in rows]

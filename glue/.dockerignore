@@ -1,0 +1,10 @@
+# Sent to docker build only what the image needs: no local installs, builds, caches or tests.
+console-ui/node_modules
+console-ui/dist-demo
+console-ui/Dockerfile.preview
+console-ui/docker
+msp_glue/console/ui
+**/__pycache__
+**/*.pyc
+.pytest_cache
+tests

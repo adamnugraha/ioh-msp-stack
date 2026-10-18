@@ -21,6 +21,9 @@ services:
       SEMAPHORE_COOKIE_ENCRYPTION: ${SEMAPHORE_COOKIE_ENCRYPTION}
       SEMAPHORE_MAX_PARALLEL_TASKS: "4"
       SEMAPHORE_MAX_TASK_DURATION_SEC: "3600"
+      # Single sign-on through Keycloak: "./scripts/install.sh sso-tools semaphore" writes the provider into
+      # .env. Staff then join every customer project with the role their Keycloak roles give (msp-glue).
+      SEMAPHORE_OIDC_PROVIDERS: "${SEMAPHORE_OIDC_PROVIDERS:-{}}"
       TZ: ${TZ}
     volumes:
       - semaphore_data:/var/lib/semaphore

@@ -11,17 +11,17 @@ const ROLES: { role: string; console: string; tools: string }[] = [
   {
     role: "msp-manager",
     console: "Reads every page; service levels and exports.",
-    tools: "Read-only in Nautobot and Zabbix, supervisor in GLPI, viewer in Grafana.",
+    tools: "Views Nautobot; User role, read-only, in Zabbix; guest in Semaphore; reads Forgejo; Viewer in Grafana.",
   },
   {
     role: "msp-engineer",
     console: "Acknowledges and investigates problems, opens tickets and changes, plans maintenance, adds devices, re-syncs customers, runs configuration checks.",
-    tools: "Changes in Nautobot, the engineers' user group in Zabbix, technician in GLPI, read access to the backups in Forgejo, editor in Grafana.",
+    tools: "Changes the inventory and runs jobs in Nautobot; Admin role in Zabbix's NOC engineers group; guest in Semaphore; reads the backups in Forgejo; Editor in Grafana.",
   },
   {
     role: "msp-automation",
     console: "Starts playbooks, for an open ticket or an approved change of the same customer.",
-    tools: "Task runner in each customer's Semaphore project, write access to the playbooks repository.",
+    tools: "Task runner in each customer's Semaphore project; writes playbooks and templates in Forgejo.",
   },
 ];
 
@@ -35,7 +35,12 @@ export function ToolsPage() {
     <Page>
       <PageHeader
         title="Tools and sign-in"
-        meta={<span>One staff account in Keycloak signs you in to the console and to every tool. Signing out of the console signs you out of Keycloak too.</span>}
+        meta={
+          <span>
+            One staff account in Keycloak signs you in to the console and, once single sign-on into the tools is on, to Nautobot, Zabbix, Semaphore, Forgejo and Grafana.
+            GLPI keeps its own log-in. Signing out of the console signs you out of Keycloak too.
+          </span>
+        }
         actions={
           me && (
             <Button variant="outline" size="sm" onClick={() => openTool(me.accountUrl, "Keycloak")}>
@@ -106,7 +111,7 @@ export function ToolsPage() {
               </div>
               <div>
                 <div className="text-muted-foreground">Version</div>
-                <div className="font-medium">{keycloak.version}</div>
+                <div className="font-medium">{keycloak.version ?? "not reported"}</div>
               </div>
               <div>
                 <div className="text-muted-foreground">Staff accounts</div>
@@ -115,8 +120,8 @@ export function ToolsPage() {
             </div>
             {DEMO && (
               <p className="border-t px-4 py-3 text-[12.5px] text-muted-foreground">
-                In the preview the tools are not connected: the buttons say where they would go. The sign-in methods are the ones kit 1.2.0 sets up; the method for GLPI
-                is confirmed in the lab before release.
+                In the preview the tools are not connected: the buttons say where they would go. The sign-in methods are the ones kit 1.2.0 sets up with
+                ./scripts/install.sh sso-tools; GLPI keeps its own log-in.
               </p>
             )}
           </Section>

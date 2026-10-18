@@ -226,6 +226,7 @@ def refresh_zabbix_permissions(z: Zabbix, tenant: Tenant | None = None) -> None:
     every = z.hostgroups_with_prefix(zm["customer_group_root"])
     z.ensure_usergroup(zm["noc_usergroup"], [(g["groupid"], PERM_READ_WRITE) for g in every])
     z.ensure_usergroup(zm["service_usergroup"], [(g["groupid"], PERM_READ) for g in every], gui_access=3)
+    z.ensure_usergroup(zm.get("manager_usergroup", "MSP managers"), [(g["groupid"], PERM_READ) for g in every])
     tenants = [tenant] if tenant else managed_tenants()
     for t in tenants:
         if not t.valid:

@@ -78,7 +78,7 @@ trap cleanup_ca EXIT
 split_ca() { awk -v dir="$2" '/-----BEGIN CERTIFICATE-----/ {n++; f = sprintf("%s/lab-ca-%d.crt", dir, n)} n && f {print > f} /-----END CERTIFICATE-----/ {close(f); f = ""}' "$1"; }
 if [ -n "${LAB_CA_FILE:-}" ]; then for d in $CA_DIRS; do split_ca "$LAB_CA_FILE" "$d"; done; fi
 "${BUILD[@]}" --build-arg NAUTOBOT_IMAGE="$NAUTOBOT_IMAGE" -t msp/nautobot:3.2.6-gc3.0.8 components/nautobot
-"${BUILD[@]}" -t msp/glue:1.0 glue
+"${BUILD[@]}" -t msp/glue:1.2 glue
 "${BUILD[@]}" -t msp/lab-fakenos:1.2.1 lab/fakenos
 "${BUILD[@]}" -t msp/lab-linux:1.0 lab/linux-server
 cleanup_ca
@@ -111,6 +111,9 @@ step "GLPI API access (same as Setup > General > API in the web interface)"
 for key in enable_api enable_api_login_credentials enable_api_login_external_token; do
   $C exec -T glpi php bin/console config:set "$key" 1 >/dev/null
 done
+# GLPI's clock in the platform's time zone, as the installer sets it
+$C exec -T glpi php bin/console database:enable_timezones --no-interaction >/dev/null
+$C exec -T glpi php bin/console config:set timezone "${TZ:-Asia/Jakarta}" >/dev/null
 if [ -z "${GLPI_APP_TOKEN:-}" ]; then
   APP_TOKEN=$(openssl rand -hex 20)
   SUBNET=$(docker network inspect msp -f '{{(index .IPAM.Config 0).Subnet}}')
