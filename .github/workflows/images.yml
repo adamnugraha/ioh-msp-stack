@@ -1,6 +1,6 @@
 # Container images of the kit, on Docker Hub as <repository>:<name>-<version>.
 #
-#   glue             msp-glue and the MSP Console          ioh-msp-stack:glue-1.1.0
+#   glue             msp-glue and the MSP Console          ioh-msp-stack:glue-1.2.0
 #   nautobot         Nautobot with Golden Config           ioh-msp-stack:nautobot-3.2.6-gc3.0.8
 #   console-preview  the console preview with sample data  ioh-msp-stack:console-preview
 #

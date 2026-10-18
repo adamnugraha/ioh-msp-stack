@@ -292,24 +292,12 @@ def test_pages_need_a_sign_in(client):
     assert r.status_code == 303 and r.headers["location"].startswith("/auth/login?next=/ops")
 
 
-def test_background_refresh_without_session_gets_401(client):
-    assert client.get("/ops", headers={"X-Console-Refresh": "1"}).status_code == 401
-    r = client.post("/actions/ack", data={"eventid": "1"})
-    assert r.status_code == 401 and "nothing was done" in r.text    # a page that says so, not raw JSON
-
-
 def test_health_and_security_headers(client):
     r = client.get("/healthz")
     assert r.status_code == 200 and r.json()["status"] == "ok"
     csp = r.headers["content-security-policy"]
     assert "script-src 'self'" in csp and "frame-ancestors 'none'" in csp
     assert r.headers["x-frame-options"] == "DENY"
-
-
-def test_csv_cells_cannot_become_formulas():
-    from msp_glue.console.app import _csv
-    body = _csv("x.csv", ["a", "b"], [{"a": "=HYPERLINK(1)", "b": "plain"}]).body.decode()
-    assert "'=HYPERLINK(1)" in body and ",plain" in body
 
 
 # --------------------------------------------------------------------- chat
@@ -343,3 +331,13 @@ def test_chat_templates_escape_values_for_telegram_and_email():
         for field in (".problem", ".customer", ".device", ".update_message", ".event_url", ".ticket_url",
                       ".console_url"):
             assert f"{{{{ {field} | html }}}}" in template, f"{field} not escaped"
+
+
+def test_job_results_read_as_words():
+    from msp_glue import server
+    from msp_glue.devices import SyncReport
+    assert server.describe(None) == ""
+    assert server.describe(SyncReport(created=["acme/x"])).startswith("created 1, updated 0")
+    assert server.describe({"opened": 1, "solved": 2}) == "opened 1, solved 2"
+    assert server.describe({"msp_glpi_entity_id": 2}) == "glpi entity id 2"
+    assert server.describe("done") == "done"

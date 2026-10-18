@@ -19,6 +19,11 @@ x-nautobot-common: &nautobot-common
     NAUTOBOT_LOG_LEVEL: INFO
     NAUTOBOT_CONFIG: /opt/nautobot/nautobot_config.py
     NAUTOBOT_INSTALLATION_METRICS_ENABLED: "False"
+    # Single sign-on through Keycloak (./scripts/install.sh sso-tools nautobot sets these in .env)
+    MSP_DOMAIN: ${MSP_DOMAIN}
+    NAUTOBOT_SSO: ${NAUTOBOT_SSO:-False}
+    NAUTOBOT_SSO_CLIENT_SECRET: ${KEYCLOAK_NAUTOBOT_CLIENT_SECRET:-}
+    NAUTOBOT_SSO_PUBLIC_KEY: ${KEYCLOAK_REALM_PUBLIC_KEY:-}
   volumes:
     # Customer secrets (device logins) as read-only files, one folder per customer.
     # Shared with msp-glue. See tenants/README.md.

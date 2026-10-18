@@ -14,6 +14,8 @@
   mspctl user disable <code> <login>    remove a customer user's access
   mspctl compliance                     open, update or solve configuration-drift tickets
   mspctl sso setup                      create or repair the Keycloak realm "msp" (needs KEYCLOAK_ADMIN_PASSWORD)
+  mspctl sso tools <tool ...>           staff sign in to grafana, forgejo, nautobot, semaphore, zabbix through Keycloak
+  mspctl sso keys | sync                the realm's public key and certificate | Semaphore project memberships now
   mspctl staff add <email> --role ...   staff account for the MSP Console: manager, engineer, automation or admin
   mspctl staff roles <email> --role ... set exactly these roles (removes the others)
   mspctl staff list | reset <email> | disable <email>
@@ -196,14 +198,33 @@ def cmd_compliance(_args) -> int:
     return 0
 
 
-def cmd_sso(_args) -> int:
-    from . import sso
+def cmd_sso(args) -> int:
+    from . import sso, sso_tools
+    if args.action == "keys":
+        # The realm's public signing key and certificate: not secret, the tools check Keycloak's signatures with them
+        keys = sso.realm_keys()
+        print(f"KEYCLOAK_REALM_PUBLIC_KEY={keys['public_key']}")
+        print(f"KEYCLOAK_REALM_CERTIFICATE={keys['certificate']}")
+        return 0
+    if args.action == "sync":
+        print(sso_tools.sync_semaphore_members() or "Semaphore does not sign in through Keycloak (SSO_TOOLS)")
+        return 0
     password = os.environ.get("KEYCLOAK_ADMIN_PASSWORD", "")
     if not password:
         print("Set KEYCLOAK_ADMIN_PASSWORD (docker compose run -e KEYCLOAK_ADMIN_PASSWORD msp-glue mspctl sso setup)")
         return 1
-    for key, value in sso.setup(password).items():
-        print(f"  {key:<8} {value}")
+    if args.action == "setup":
+        for key, value in sso.setup(password).items():
+            print(f"  {key:<8} {value}")
+        return 0
+    tools = [t.strip().lower() for value in args.tools for t in value.split(",") if t.strip()]
+    if not tools:
+        print(f"Name the tools, for example: mspctl sso tools grafana forgejo ({', '.join(sso.TOOL_CLIENTS)})")
+        return 1
+    for tool, callback in sso.setup_tools(password, tools).items():
+        print(f"  {tool:<10} Keycloak client ready, signs in at {callback}")
+        for key, value in sso_tools.prepare(tool).items():
+            print(f"  {'':<10} {key}: {value}")
     return 0
 
 
@@ -300,7 +321,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("compliance")
 
     so = sub.add_parser("sso")
-    so.add_argument("action", choices=["setup"])
+    so.add_argument("action", choices=["setup", "tools", "keys", "sync"],
+                    help="setup: realm, roles, console; tools <names>: sign-in to the tools; keys: the realm's "
+                         "public key and certificate; sync: Semaphore project memberships now")
+    so.add_argument("tools", nargs="*", help="with tools: grafana, forgejo, nautobot, semaphore, zabbix")
 
     st = sub.add_parser("staff")
     st.add_argument("action", choices=["add", "list", "roles", "reset", "disable"])

@@ -25,7 +25,7 @@ folder; a plain `npm run build:demo` never asks for a logo.
 
 | Path | What it holds |
 |---|---|
-| `src/lib/api/types.ts` | The contract with the back end: every type a page reads and every request an action sends. The FastAPI side implements exactly this. |
+| `src/lib/api/types.ts` | The contract with the back end: every type a page reads and every request an action sends. The FastAPI side implements exactly this, and `glue/tests/contract.py` reads this file to check every answer of the back end against it, in the unit tests and in the lab against the real tools. |
 | `src/lib/api/http.ts` | The client for the real API: session cookie, cross-site request forgery token on every change, plain-words errors. |
 | `src/lib/api/demo/` | The sample data and a stand-in API that follows the console's rules (roles, approved changes for changing templates, device limits). |
 | `src/lib/queries.ts` | TanStack Query hooks: caching, refresh intervals, toasts after actions. |

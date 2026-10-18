@@ -31,15 +31,36 @@ run Semaphore playbooks; Golden Config drift opens GLPI tickets; `mspctl user ad
 customer user access to its own entity in GLPI and its own Grafana organisation.
 
 The MSP Console (`https://console.<domain>`) shows what every tool knows on one set of pages, with one
-sign-in through Keycloak; the tools themselves keep their own log-ins in this version. Engineers get
-an operations view: open problems of every customer, worst first, with their GLPI tickets; customer
-health; tickets past due; msp-glue's job queue. Managers get a service view: availability against
-target per customer, service-level breaches, mean time to resolve, configuration compliance and
-backups, month to date, with a CSV export. From the console an engineer acknowledges a problem
-(the note goes to the GLPI ticket), re-syncs a customer or starts a configuration check; with the
-automation role, also a Semaphore playbook, which needs a GLPI ticket or approved change of that
-customer and posts its start and result there. Every action is in the console's audit trail. Staff
-sign in through Keycloak with three roles: manager, engineer and automation.
+sign-in through Keycloak. From kit 1.2.0 its pages are a React application (dark, with white text)
+that reads the console's own JSON interface (`/api/v1`):
+
+* **Operations**: open problems of every customer, worst first, with their GLPI tickets and the notes
+  engineers added; tickets due next; today's changes and maintenance windows; msp-glue's job queue;
+  one row per customer across monitoring, tickets, changes, configuration, backups, automation and
+  availability.
+* **Customer pages**: devices; a network map from the cables and circuits recorded in Nautobot;
+  problems and tickets; changes and maintenance; Semaphore runs; the customer's audit trail; downtime
+  per day this month, exactly as its availability agreement in Zabbix counts it.
+* **Device pages**: Zabbix charts (response time, loss, CPU, memory, disks, traffic per interface,
+  from an hour to 30 days), interfaces with their cables and circuits, configuration backups from
+  Forgejo, Golden Config's rule-by-rule results (secrets masked), tickets, runs and maintenance.
+* **Service levels** for managers: availability against target, breaches, mean time to resolve,
+  compliance and backups, this month or the two before, with a CSV export.
+* **Actions**, each checked against the person's roles and written to the audit trail before it
+  runs: acknowledge a problem (the note reaches the GLPI ticket), open a ticket, raise a GLPI change
+  with its window, risk and back-out plan, plan Zabbix maintenance (regulated customers need a
+  change), add a device to Nautobot, re-sync a customer, start a configuration check, and, with the
+  automation role, run a Semaphore playbook for an open ticket or an approved change.
+* **Investigate** (off until you give the console a model): the console reads Zabbix, Nautobot,
+  GLPI, Golden Config and Semaphore with its own accounts, an OpenAI-compatible model you run or IOH
+  has approved drafts the likely cause and next steps, and the engineer checks the draft before it
+  goes to the ticket as a private note.
+
+Staff sign in through Keycloak with three roles: manager, engineer and automation. From 1.2.0 the
+same account also signs them in to Nautobot, Zabbix (SAML), Semaphore, Forgejo and Grafana once
+`./scripts/install.sh sso-tools` has run, with the roles mapped to each tool's own groups; GLPI keeps
+its own log-in, and every tool keeps its local accounts for the platform's service accounts and as the
+way in when Keycloak is down.
 
 Chat alerts: problems of severity High or worse on managed devices go to the NOC's Telegram group,
 Teams channel or mailbox through Versus Incident, with the GLPI ticket, the Zabbix event and the
@@ -85,7 +106,7 @@ Internet access for the first build (Docker Hub, PyPI, grafana.com). It also run
 start then takes longer (Nautobot's database migration alone took 10 minutes in testing).
 
 ```bash
-./lab/run-lab.sh                       # builds, starts, creates two sample customers, runs 12 end-to-end checks
+./lab/run-lab.sh                       # builds, starts, creates two sample customers, runs 15 end-to-end checks
 python3 lab/check.py golden_config     # run one check again (names are the functions in lab/check.py)
 ```
 
@@ -99,7 +120,7 @@ The two images the kit builds itself, and the console preview, are published to
 
 | Tag | What it is |
 |---|---|
-| `glue-1.1.0`, `glue-1.1` | msp-glue and the MSP Console |
+| `glue-1.2.0`, `glue-1.2` | msp-glue and the MSP Console, with the console's pages built in |
 | `nautobot-3.2.6-gc3.0.8` | Nautobot with the Golden Config and Nornir apps |
 | `console-preview` | the new console with made-up sample data; connects to nothing |
 
@@ -111,8 +132,8 @@ To use the published images instead of building on the server, pull and name the
 compose files expect, then start as usual:
 
 ```bash
-docker pull adityanugraha/ioh-msp-stack:glue-1.1.0
-docker tag adityanugraha/ioh-msp-stack:glue-1.1.0 msp/glue:1.1
+docker pull adityanugraha/ioh-msp-stack:glue-1.2.0
+docker tag adityanugraha/ioh-msp-stack:glue-1.2.0 msp/glue:1.2
 docker pull adityanugraha/ioh-msp-stack:nautobot-3.2.6-gc3.0.8
 docker tag adityanugraha/ioh-msp-stack:nautobot-3.2.6-gc3.0.8 msp/nautobot:3.2.6-gc3.0.8
 ```
@@ -132,7 +153,7 @@ Each version of the kit is published as a zip in the `dist` folder of this repos
 SHA-256 checksum in `dist/SHA256SUMS`. On the server (`wget -O` works the same as `curl -o`):
 
 ```bash
-curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.1.0.zip
+curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.2.0.zip
 sha256sum /tmp/ioh-msp-stack.zip      # must equal the line for this file in dist/SHA256SUMS
 command -v unzip >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y unzip)
 sudo mkdir -p /opt/ioh-msp-stack && sudo chown "$(id -un):" /opt/ioh-msp-stack
@@ -169,6 +190,7 @@ Then, from `/opt/ioh-msp-stack` and without sudo:
 ./scripts/install.sh certs ~/fullchain.pem ~/privkey.pem   # IOH certificates instead of Caddy's own
 ./scripts/install.sh sso --admin-email you@ioh.co.id --name "Your Name"   # Keycloak and the first administrator
 ./scripts/install.sh console                       # the MSP Console on https://console.<domain>
+./scripts/install.sh sso-tools                     # staff sign in to Nautobot, Zabbix, Semaphore, Forgejo, Grafana with Keycloak
 ./scripts/install.sh chat telegram                 # chat alerts (or: chat teams, chat email, chat test, chat off)
 ./scripts/install.sh grafana                       # phase 3: customer dashboards
 ```
@@ -177,6 +199,38 @@ Then, from `/opt/ioh-msp-stack` and without sudo:
 with `--admin-email` the first administrator; it prints a one-time password that Keycloak replaces
 at the first sign-in. `console` starts the MSP Console and proves that its sign-in goes to Keycloak.
 Each needs its DNS name (or Cloudflare route): `sso.<domain>` and `console.<domain>`, like the tools.
+
+`sso-tools` (after `sso`) gives Nautobot, Zabbix, Semaphore, Forgejo and Grafana (when it is on) a
+Keycloak sign-in: a client per tool in Keycloak, then each tool's side. Name tools to do only those,
+for example `./scripts/install.sh sso-tools nautobot zabbix`. What the roles become:
+
+| Tool | manager | engineer | automation (with engineer) |
+|---|---|---|---|
+| Nautobot | group MSP managers: views everything | group MSP engineers: also changes the inventory and runs jobs | as engineer |
+| Zabbix (SAML) | User role, group MSP managers (read-only) | Admin role, group MSP NOC engineers | as engineer |
+| Semaphore | guest in every customer project | guest | task runner in every customer project |
+| Forgejo | team managers (reads) | team engineers (reads) | team automation (writes playbooks and templates) |
+| Grafana | Viewer in every organisation | Editor in every organisation | Editor |
+
+Accounts appear at the first sign-in; someone without any of the three roles is refused (Grafana,
+Zabbix) or sees nothing (the others). Semaphore has no role mapping of its own, so msp-glue adds staff
+to every customer project within ten minutes of their first sign-in, and follows role changes the same
+way. GLPI keeps its own log-in (its staff profiles and the customer portal). The tools' local accounts
+(admin, the service accounts msp-glue uses) keep working, and are the way in when Keycloak is down.
+If Keycloak's realm keys are ever rotated, run `./scripts/install.sh sso-tools nautobot zabbix` again.
+
+Investigate in the console stays off until the console has a model to ask. Set the endpoint of an
+OpenAI-compatible server (Ollama, vLLM, an IOH-approved hosted model) in `.env`, then run
+`./scripts/install.sh console`:
+
+```bash
+CONSOLE_AI_URL=http://ollama:11434/v1     # here an Ollama container on the msp network; the evidence goes there only
+CONSOLE_AI_MODEL=qwen3:14b
+CONSOLE_AI_KEY=                            # when the endpoint needs a key
+```
+
+To show the operator's logo in the console's side bar, put `logo.svg` or `logo.png` in `branding/`
+(see `branding/README.md`); the console serves it, and the file stays out of Git.
 `chat` asks for the bot token and chat ID (Telegram), the workflow address (Teams) or the mail
 server (e-mail), with hidden typing for secrets, checks them, sets up Zabbix and sends a test
 message. Which severities go to chat, and the one-minute wait before the first message (a problem
@@ -203,6 +257,23 @@ From 1.0.x to 1.1.0, after unpacking: `./scripts/install.sh images` (builds msp-
 and, if you want chat alerts, `./scripts/install.sh chat telegram` (or teams, email). The missing
 secrets are added to `.env` on the way; nothing else changes.
 
+From 1.1.0 to 1.2.0, after backing up and unpacking:
+
+```bash
+./scripts/install.sh preflight      # 1.2 also needs https://registry.npmjs.org (the console's pages are built in the image)
+./scripts/install.sh images         # builds msp-glue 1.2 with the new pages, and Nautobot with the sign-in settings
+docker compose up -d                # every tool picks up its new settings
+./scripts/install.sh glpi-api       # GLPI on the platform's time zone (it ran on UTC); tickets keep their real times
+./scripts/install.sh console        # the new console; old bookmarks and chat links keep working
+./scripts/install.sh sso-tools      # optional: staff sign in to the tools with Keycloak
+./scripts/install.sh check
+```
+
+What changes for people: the console's pages look and work differently (same addresses); GLPI shows
+times in the platform's time zone instead of UTC, and the business-hours calendar of the bronze tier
+now really means 08:00 to 17:00 there; with `sso-tools`, the tools' log-in pages get a Keycloak
+button. The console's audit trail and sessions carry over.
+
 The guide's build tab lists the same work as manual steps, for anyone who wants to see or repeat a
 single step by hand.
 
@@ -225,6 +296,7 @@ docker compose exec msp-glue mspctl staff roles eko@ioh.co.id --role manager   #
 docker compose exec msp-glue mspctl staff reset eko@ioh.co.id     # new one-time password, sessions ended
 docker compose exec msp-glue mspctl staff disable eko@ioh.co.id   # account off, sessions ended at once
 docker compose exec msp-glue mspctl chat test             # one test message to the NOC chat
+docker compose exec msp-glue mspctl sso sync              # Semaphore project memberships from the Keycloak roles, now
 docker compose logs -f msp-glue                           # what msp-glue is doing
 docker compose logs -f msp-console versus-incident        # the console and the chat alerts
 ./scripts/add-customer-secrets.sh acme                    # device log-in and SNMP secrets of a new customer
@@ -291,3 +363,23 @@ After editing `glue/mappings.yaml` or the msp-glue code, rebuild or restart it:
   when pip updates its bundled copies.
 * Versus Incident 1.4 releases add AI and enterprise features quickly. The kit uses only its alert
   path, with the agent, queues and on-call switched off; test a newer `VERSUS_IMAGE` in a lab first.
+* **Zabbix keeps counting a problem that was open when its host was disabled** (Zabbix bug
+  [ZBX-27917](https://support.zabbix.com/browse/ZBX-27917), confirmed for 7.0, not fixed yet). msp-glue
+  disables, never deletes, the host of a device that is removed from Nautobot or no longer active, so a
+  device that was down when it was retired keeps its customer's service "down" and lowers the monthly
+  availability until the host is deleted. The console no longer shows those problems (as Zabbix's own
+  Problems page), but the availability figure is Zabbix's. Until msp-glue handles it: after retiring a
+  device that was down, delete its host in Zabbix (Data collection, Hosts) once its history is not
+  needed; in the lab the customer's service recovered within a minute.
+* The official GLPI image runs PHP in UTC, so GLPI showed and stored ticket times in UTC and read the
+  "Business hours WIB" calendar as UTC hours. From 1.2.0 the installer switches on GLPI's time zone
+  support and sets the platform's zone (`glpi-api`); GLPI keeps date-times as time stamps, so the times
+  GLPI recorded itself (opened, solved, due) keep their real moments. Times someone typed into GLPI by
+  hand while it showed UTC were read as UTC hours and now show 7 hours later (WIB); due times already
+  set on open bronze tickets stay as they were computed. The console reads GLPI's own clock either way.
+* Keycloak's default `role_list` scope sends one SAML `Role` attribute per role, and Zabbix refuses an
+  assertion that repeats an attribute ("Found an Attribute element with duplicated Name"). The kit's
+  Zabbix client sends every role in one attribute instead.
+* Semaphore stops at start-up when `SEMAPHORE_OIDC_PROVIDERS` is set but empty; the kit's default is
+  `{}` (no provider). Its manual endpoint settings are named `issuer`, `auth`, `token`, `userinfo`,
+  `jwks` and `algorithms`.

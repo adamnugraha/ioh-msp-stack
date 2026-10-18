@@ -97,6 +97,7 @@ export function InvestigateSheet({
             </p>
           )}
           <ErrorNote error={start.error ?? poll.error} />
+          {inv?.status === "failed" && <ErrorNote error={inv.error || "The model did not give a usable answer. Try again in a minute."} />}
 
           <section aria-label="Evidence">
             <h3 className="mb-2 text-[13.5px] font-semibold">What the console looked at</h3>

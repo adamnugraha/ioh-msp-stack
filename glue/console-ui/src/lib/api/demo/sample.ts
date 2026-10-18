@@ -441,6 +441,7 @@ export function meFor(staff: Staff, now: number): Me {
     accountUrl: toolUrl("keycloak", "/realms/msp/account"),
     timezone: "Asia/Jakarta",
     platformDomain: DOMAIN,
+    investigate: true,
   };
 }
 
@@ -449,17 +450,17 @@ function tools(): ToolStatus[] {
     ({ method, label, mapping, enabled: true });
   return [
     { tool: "Nautobot", url: toolUrl("nautobot"), purpose: "Source of truth: customers, sites, devices, addresses, cables", ok: true,
-      version: "3.2.6", ms: 142, detail: "3.2.6", signIn: kc("Keycloak, OpenID Connect", "msp-engineer: MSP engineers group (change); msp-manager: read only") },
+      version: "3.2.6", ms: 142, detail: "3.2.6", signIn: kc("Keycloak, OpenID Connect", "msp-engineer and msp-automation: view, change the inventory, run jobs; msp-manager: view") },
     { tool: "Zabbix", url: toolUrl("zabbix"), purpose: "Monitoring, problems, availability agreements, maintenance", ok: true,
-      version: "7.0.31", ms: 38, detail: "7.0.31", signIn: kc("Keycloak, SAML", "msp-engineer: MSP engineers user group; msp-manager: MSP managers (read only)", "saml") },
+      version: "7.0.31", ms: 38, detail: "7.0.31", signIn: kc("Keycloak, SAML", "msp-engineer: Admin role in MSP NOC engineers; msp-manager: User role, read-only", "saml") },
     { tool: "GLPI", url: toolUrl("glpi"), purpose: "Tickets, changes, service levels, assets", ok: true,
-      version: "11.0.11", ms: 96, detail: "11.0.11", signIn: kc("Keycloak, OpenID Connect (plugin)", "msp-engineer: Technician profile; msp-manager: Supervisor profile") },
+      version: "11.0.11", ms: 96, detail: "11.0.11", signIn: { method: "local", label: "GLPI's own log-in", mapping: "Staff profiles and the customer portal are kept in GLPI", enabled: false } },
     { tool: "Semaphore", url: toolUrl("semaphore"), purpose: "Ansible playbooks per customer project", ok: true,
-      version: "2.19.14", ms: 22, detail: "2.19.14", signIn: kc("Keycloak, OpenID Connect", "msp-automation: task runner in every customer project") },
+      version: "2.19.14", ms: 22, detail: "2.19.14", signIn: kc("Keycloak, OpenID Connect", "msp-automation: task runner in every customer project; msp-engineer and msp-manager: guest") },
     { tool: "Forgejo", url: toolUrl("forgejo"), purpose: "Configuration backups, playbooks, Golden Config templates", ok: true,
-      version: "12.0.4", ms: 31, detail: "12.0.4", signIn: kc("Keycloak, OpenID Connect", "msp-engineer: read on backups; msp-automation: write on playbooks") },
+      version: "12.0.4", ms: 31, detail: "12.0.4", signIn: kc("Keycloak, OpenID Connect", "msp-automation: team automation (write); msp-engineer and msp-manager: teams that read") },
     { tool: "Grafana", url: toolUrl("grafana"), purpose: "Customer dashboards (optional)", ok: true,
-      version: "13.2.3", ms: 45, detail: "13.2.3", signIn: kc("Keycloak, OpenID Connect", "msp-manager: Viewer; msp-engineer: Editor, one organisation per customer") },
+      version: "13.2.3", ms: 45, detail: "13.2.3", signIn: kc("Keycloak, OpenID Connect", "msp-engineer: Editor; msp-manager: Viewer; in every organisation") },
     { tool: "Keycloak", url: toolUrl("keycloak"), purpose: "Staff accounts, roles and single sign-on", ok: true,
       version: "26.8.0", ms: 27, detail: "26.8.0", signIn: { method: "oidc", label: "Identity provider for every tool", mapping: "Roles: msp-manager, msp-engineer, msp-automation", enabled: true } },
   ];

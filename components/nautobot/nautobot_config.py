@@ -62,3 +62,40 @@ PLUGINS_CONFIG = {
         },
     },
 }
+
+# ------------------------------------------------------------------------------------------------
+# Single sign-on through Keycloak, once "./scripts/install.sh sso-tools nautobot" has set NAUTOBOT_SSO=true
+# and the values below. Staff then choose the single sign-on button on the log-in page; the local log-in
+# stays for the admin account and the API token. The Keycloak groups "MSP managers", "MSP engineers" and
+# "MSP automation" become the Nautobot groups of the same names at every sign-in, with the permissions
+# msp-glue gave those groups ("mspctl sso tools nautobot"): managers view, engineers also change the inventory.
+if is_truthy(os.getenv("NAUTOBOT_SSO", "False")):
+    _realm = f"https://sso.{os.environ['MSP_DOMAIN']}/realms/msp"
+    AUTHENTICATION_BACKENDS = [
+        "social_core.backends.keycloak.KeycloakOAuth2",
+        "nautobot.core.authentication.ObjectPermissionBackend",
+    ]
+    SOCIAL_AUTH_KEYCLOAK_KEY = "nautobot"
+    SOCIAL_AUTH_KEYCLOAK_SECRET = os.environ["NAUTOBOT_SSO_CLIENT_SECRET"]
+    SOCIAL_AUTH_KEYCLOAK_PUBLIC_KEY = os.environ["NAUTOBOT_SSO_PUBLIC_KEY"]
+    # The browser goes to Keycloak's public address; Nautobot itself asks Keycloak on the platform network.
+    SOCIAL_AUTH_KEYCLOAK_AUTHORIZATION_URL = f"{_realm}/protocol/openid-connect/auth"
+    SOCIAL_AUTH_KEYCLOAK_ACCESS_TOKEN_URL = "http://keycloak:8080/realms/msp/protocol/openid-connect/token"
+    SOCIAL_AUTH_KEYCLOAK_ID_KEY = "email"
+    # Caddy ends TLS in front of Nautobot: the address Keycloak sends the browser back to is https.
+    SOCIAL_AUTH_REDIRECT_IS_HTTPS = True
+    SOCIAL_AUTH_PIPELINE = (
+        "social_core.pipeline.social_auth.social_details",
+        "social_core.pipeline.social_auth.social_uid",
+        "social_core.pipeline.social_auth.auth_allowed",
+        "social_core.pipeline.social_auth.social_user",
+        "social_core.pipeline.user.get_username",
+        "social_core.pipeline.user.create_user",
+        "social_core.pipeline.social_auth.associate_user",
+        "social_core.pipeline.social_auth.load_extra_data",
+        "social_core.pipeline.user.user_details",
+        "nautobot.extras.group_sync.group_sync",
+    )
+    SSO_ENABLE_GROUP_SYNC = True
+    SSO_CLAIMS_GROUP = "groups"
+    SSO_SYNC_GROUPS = ["MSP managers", "MSP engineers", "MSP automation"]

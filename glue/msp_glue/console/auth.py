@@ -139,7 +139,6 @@ def current_user(request: Request) -> User | None:
         if verdict is False:
             store.delete_session(sid)
             request.session.pop("sid", None)
-            request.session["flash"] = ("warning", "Your session ended. Sign in again.")
             return None
         if verdict is not None:
             row.update(verdict)
@@ -184,7 +183,8 @@ def _recheck(row: dict) -> dict | None | bool:
 def start_session(request: Request, user: User, token: dict) -> None:
     sid = secrets.token_urlsafe(32)
     expires = time.time() + min(SESSION_SECONDS, int(token.get("refresh_expires_in") or SESSION_SECONDS) + 60)
-    store.save_session(sid, user.as_dict(), token.get("id_token", ""), token.get("refresh_token", ""), expires)
+    store.save_session(sid, user.as_dict(), token.get("id_token", ""), token.get("refresh_token", ""), expires,
+                       address=client_address(request))
     request.session["sid"] = sid
     request.session["csrf"] = secrets.token_urlsafe(24)
 

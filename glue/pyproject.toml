@@ -1,6 +1,6 @@
 [project]
 name = "msp-glue"
-version = "1.1.0"
+version = "1.2.0"
 description = "Integration service for the IOH open-source managed services platform"
 requires-python = ">=3.11"
 dependencies = [
@@ -30,4 +30,5 @@ build-backend = "setuptools.build_meta"
 include = ["msp_glue*"]
 
 [tool.setuptools.package-data]
-"msp_glue.console" = ["templates/*.html", "static/*"]
+# ui: the built pages (console-ui, "npm run build"); the image build makes them
+"msp_glue.console" = ["templates/*.html", "static/*", "ui/*", "ui/assets/*"]

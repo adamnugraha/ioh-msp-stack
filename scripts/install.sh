@@ -16,6 +16,7 @@
 #   grafana   customer dashboards (phase 3 of the build plan)
 #   sso [--admin-email <e-mail> --name "<full name>"]   Keycloak sign-in for staff, first administrator
 #   console   the MSP Console on https://console.<domain> (needs sso)
+#   sso-tools [grafana forgejo nautobot semaphore zabbix]   staff sign in to the tools with Keycloak too
 #   chat telegram|teams|email|test|off   problems on managed devices to the NOC chat (Versus Incident)
 #   certs <fullchain.pem> <privkey.pem>   use IOH certificates instead of Caddy's own (certs internal: back)
 #
@@ -34,9 +35,9 @@ KIT_DIR=$(pwd)
 STATE_FILE=.install-state
 LOG_FILE=install.log
 CORE_STAGES=(preflight settings network images start glpi-api forgejo-admin tokens platform glue harden check)
-ALL_STAGES=("${CORE_STAGES[@]}" proxy grafana sso console chat)
+ALL_STAGES=("${CORE_STAGES[@]}" proxy grafana sso console sso-tools chat)
 NAUTOBOT_TAG=msp/nautobot:3.2.6-gc3.0.8
-GLUE_TAG=msp/glue:1.1
+GLUE_TAG=msp/glue:1.2
 GRAFANA_PLUGIN_VERSION=6.8.0
 
 # ----------------------------------------------------------------------------- output
@@ -277,8 +278,9 @@ stage_preflight() {
   if [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null || echo unknown)" = yes ]; then ok "clock synchronised"
   else warn "clock not synchronised" "sudo timedatectl set-ntp true (or point chrony at IOH's time servers)"; fi
 
-  # Needed now: Docker Hub (registry, log-in, image layers), Codeberg (Forgejo image), PyPI (the two image builds).
-  for host in registry-1.docker.io auth.docker.io production.cloudfront.docker.com codeberg.org pypi.org files.pythonhosted.org; do
+  # Needed now: Docker Hub (registry, log-in, image layers), Codeberg (Forgejo image), PyPI (the two image builds),
+  # npm (the MSP Console's pages are built inside the msp-glue image).
+  for host in registry-1.docker.io auth.docker.io production.cloudfront.docker.com codeberg.org pypi.org files.pythonhosted.org registry.npmjs.org; do
     if reaches "$host"; then ok "reaches $host"
     else bad "cannot reach https://$host" "allow HTTPS to it in the firewall, or export HTTPS_PROXY=http://<proxy>:<port>"; fi
   done
@@ -501,7 +503,7 @@ stage_images() {
   info "building msp-glue"
   if ! "${build[@]}" -t "$GLUE_TAG" glue >/dev/null; then
     for d in $ca_dirs; do rm -f "$d"/custom-ca-*.crt; done
-    fail "the msp-glue image did not build" "check Internet access to pypi.org; behind a proxy export HTTPS_PROXY (and CA_FILE)"
+    fail "the msp-glue image did not build" "check Internet access to pypi.org and registry.npmjs.org; behind a proxy export HTTPS_PROXY (and CA_FILE)"
   fi
   for d in $ca_dirs; do rm -f "$d"/custom-ca-*.crt; done
   local missing=0
@@ -540,6 +542,16 @@ stage_glpi_api() {
   glpi_console config:set enable_api 1
   glpi_console config:set enable_api_login_credentials 1
   glpi_console config:set enable_api_login_external_token 1
+  # GLPI's clock in the platform's time zone (TZ): ticket times, due dates and the business-hours calendar are then
+  # local time in GLPI, its customer portal and its API. GLPI stores date-times as time stamps, so tickets made
+  # before keep their real times.
+  if dc exec -T glpi php bin/console database:enable_timezones --no-interaction >/dev/null 2>&1; then
+    glpi_console config:set timezone "${TZ:-Asia/Jakarta}"
+    ok "GLPI uses the time zone ${TZ:-Asia/Jakarta}"
+  else
+    warn "GLPI could not switch on time zone support, so its times stay in UTC" \
+      "docker compose exec glpi php bin/console database:enable_timezones shows why; then run ./scripts/install.sh glpi-api"
+  fi
   local subnet range gpw=glpi result
   subnet=$(docker network inspect msp -f '{{(index .IPAM.Config 0).Subnet}}')
   range=$(python3 -c "import ipaddress,sys; n=ipaddress.ip_network(sys.argv[1]); print(n.network_address, n.broadcast_address)" "$subnet")
@@ -877,6 +889,122 @@ stage_console() {
   info "Browsers need console.$MSP_DOMAIN and sso.$MSP_DOMAIN in DNS (or as routes of the Cloudflare tunnel)."
 }
 
+SSO_TOOL_NAMES="grafana forgejo nautobot semaphore zabbix"
+stage_sso_tools() {  # sso-tools [grafana forgejo nautobot semaphore zabbix]: staff sign in to the tools through Keycloak
+  step "Single sign-on into the tools (Keycloak)"
+  load_env
+  health_is keycloak healthy || fail "single sign-on (Keycloak) is not running" "./scripts/install.sh sso"
+  health_is msp-glue healthy || fail "msp-glue is not running" "./scripts/install.sh glue"
+  docker image inspect "$GLUE_TAG" >/dev/null 2>&1 || fail "the msp-glue image $GLUE_TAG is missing (new kit version)" "./scripts/install.sh images"
+  local tools=("$@") t out keys key cert map json secret_args=() current merged
+  if [ ${#tools[@]} -eq 0 ]; then
+    tools=(forgejo nautobot semaphore zabbix)
+    case ",${COMPOSE_PROFILES:-}," in *,grafana,*) tools=(grafana "${tools[@]}") ;; esac
+  fi
+  for t in "${tools[@]}"; do
+    case " $SSO_TOOL_NAMES " in *" $t "*) ;; *) fail "no single sign-on for '$t'" "./scripts/install.sh sso-tools with some of: $SSO_TOOL_NAMES" ;; esac
+    [ "$t" = grafana ] && { case ",${COMPOSE_PROFILES:-}," in *,grafana,*) ;; *) fail "Grafana is not on" "./scripts/install.sh grafana first, or leave grafana out" ;; esac; }
+    if [ "$t" != zabbix ]; then
+      key="KEYCLOAK_${t^^}_CLIENT_SECRET"
+      ensure_secret "$key"
+      export "${key?}"
+      secret_args+=(-e "$key")
+    fi
+  done
+  ok "Keycloak client secrets for ${tools[*]} are in .env"
+
+  # Keycloak clients, and what each tool needs before staff sign in (teams, groups, permissions, SAML)
+  export KEYCLOAK_ADMIN_PASSWORD
+  if ! out=$(dc run --rm --no-deps -e KEYCLOAK_ADMIN_PASSWORD "${secret_args[@]}" msp-glue mspctl sso tools "${tools[@]}" 2>&1); then
+    printf '%s\n' "$out" | tail -n 12
+    fail "single sign-on for ${tools[*]} could not be set up" \
+      "the lines above say which tool; if you changed Keycloak's admin password by hand, write it into KEYCLOAK_ADMIN_PASSWORD in .env"
+  fi
+  # What mspctl reports per tool (its own lines start with two spaces; Docker's and the log lines do not)
+  printf '%s\n' "$out" | grep -E '^  [a-z ]' | grep -v 'group_team_map' | sed 's/^  /         /' || true
+  keys=$(dc exec -T msp-glue mspctl sso keys) || fail "could not read Keycloak's public key" "docker compose logs --tail 30 keycloak msp-glue"
+  set_env KEYCLOAK_REALM_PUBLIC_KEY "$(printf '%s\n' "$keys" | sed -n 's/^KEYCLOAK_REALM_PUBLIC_KEY=//p')"
+  cert=$(printf '%s\n' "$keys" | sed -n 's/^KEYCLOAK_REALM_CERTIFICATE=//p')
+  load_env
+
+  for t in "${tools[@]}"; do
+    case "$t" in
+      grafana)
+        set_env GRAFANA_SSO true; load_env
+        dc_up grafana || fail "Grafana did not restart" "docker compose logs --tail 50 grafana"
+        wait_for "Grafana" 300 "docker compose logs --tail 50 grafana" probe http://grafana:3000/api/health
+        ok "Grafana: Keycloak sign-in (engineers Editor, managers Viewer, in every organisation)" ;;
+      forgejo)
+        set_env FORGEJO_DISABLE_REGISTRATION false; load_env
+        dc_up forgejo || fail "Forgejo did not restart" "docker compose logs --tail 50 forgejo"
+        wait_for "Forgejo" 300 "docker compose logs --tail 50 forgejo" probe http://forgejo:3000/api/healthz
+        map=$(printf '%s\n' "$out" | sed -n 's/^ *group_team_map: //p')
+        local fj_args=(--name keycloak --provider openidConnect --key forgejo --secret "$KEYCLOAK_FORGEJO_CLIENT_SECRET"
+          --auto-discover-url http://keycloak:8080/realms/msp/.well-known/openid-configuration
+          --scopes openid --scopes email --scopes profile --skip-local-2fa
+          --group-claim-name roles --group-team-map "$map" --group-team-map-removal) id
+        id=$(dc exec -T -u git forgejo forgejo admin auth list 2>/dev/null | awk -F'\t' '$2 == "keycloak" {print $1}')
+        if [ -n "$id" ]; then
+          dc exec -T -u git forgejo forgejo admin auth update-oauth --id "$id" "${fj_args[@]}" >/dev/null ||
+            fail "Forgejo did not take the Keycloak sign-in" "docker compose logs --tail 30 forgejo"
+        else
+          dc exec -T -u git forgejo forgejo admin auth add-oauth "${fj_args[@]}" >/dev/null ||
+            fail "Forgejo did not take the Keycloak sign-in" "docker compose logs --tail 30 forgejo"
+        fi
+        ok "Forgejo: Keycloak sign-in (teams engineers and managers read, automation writes)" ;;
+      nautobot)
+        set_env NAUTOBOT_SSO True; load_env
+        dc_up nautobot nautobot-worker nautobot-scheduler || fail "Nautobot did not restart" "docker compose logs --tail 50 nautobot"
+        wait_for "Nautobot" 900 "docker compose logs --tail 50 nautobot" health_is nautobot healthy
+        ok "Nautobot: Keycloak sign-in (groups MSP managers, MSP engineers, MSP automation)" ;;
+      semaphore)
+        json=$(python3 -c '
+import json, sys
+domain, secret = sys.argv[1], sys.argv[2]
+realm, internal = f"https://sso.{domain}/realms/msp", "http://keycloak:8080/realms/msp/protocol/openid-connect"
+print(json.dumps({"keycloak": {
+    "display_name": "Sign in with Keycloak", "client_id": "semaphore", "client_secret": secret,
+    "redirect_url": f"https://semaphore.{domain}/api/auth/oidc/keycloak/redirect",
+    "scopes": ["openid", "profile", "email"], "username_claim": "preferred_username", "name_claim": "name",
+    "email_claim": "email",
+    # The browser uses Keycloak public address; Semaphore asks Keycloak on the platform network.
+    "endpoint": {"issuer": realm, "auth": f"{realm}/protocol/openid-connect/auth", "token": f"{internal}/token",
+                 "userinfo": f"{internal}/userinfo", "jwks": f"{internal}/certs", "algorithms": ["RS256"]}}},
+    separators=(",", ":")))' \
+          "$MSP_DOMAIN" "$KEYCLOAK_SEMAPHORE_CLIENT_SECRET")
+        set_env SEMAPHORE_OIDC_PROVIDERS "$json"; load_env
+        dc_up semaphore || fail "Semaphore did not restart" "docker compose logs --tail 50 semaphore"
+        wait_for "Semaphore" 300 "docker compose logs --tail 50 semaphore" probe http://semaphore:3000/api/ping
+        ok "Semaphore: Keycloak sign-in (automation runs tasks; engineers and managers look on, in every project)" ;;
+      zabbix)
+        [ -n "$cert" ] || fail "Keycloak gave no signing certificate" "docker compose logs --tail 30 keycloak"
+        mkdir -p secrets/platform/sso
+        { echo "-----BEGIN CERTIFICATE-----"; printf '%s\n' "$cert" | fold -w 64; echo "-----END CERTIFICATE-----"; } \
+          > secrets/platform/sso/idp.crt
+        chmod 644 secrets/platform/sso/idp.crt
+        dc_up zabbix-web || fail "Zabbix's web interface did not restart" "docker compose logs --tail 50 zabbix-web"
+        ok "Zabbix: Keycloak sign-in with SAML (engineers MSP NOC engineers, managers MSP managers read-only)" ;;
+    esac
+  done
+
+  current=${SSO_TOOLS:-}
+  merged=$(printf '%s\n' ${current//,/ } "${tools[@]}" | sort -u | paste -sd, -)
+  set_env SSO_TOOLS "$merged"
+  load_env
+  dc_up msp-glue || fail "msp-glue did not restart" "docker compose logs --tail 50 msp-glue"
+  wait_for "msp-glue" 300 "docker compose logs --tail 50 msp-glue" health_is msp-glue healthy
+  if is_done console; then dc_up msp-console || warn "the MSP Console did not restart" "docker compose logs --tail 30 msp-console"; fi
+  case " ${tools[*]} " in
+    *" semaphore "*) dc exec -T msp-glue mspctl sso sync >/dev/null 2>&1 || true ;;
+  esac
+  ok "single sign-on is on for: $merged"
+  info "Staff sign in with the Keycloak button on each tool's log-in page. The tools' own accounts (admin, the"
+  info "service accounts) keep working, and are the way in when Keycloak is down."
+  case " ${tools[*]} " in
+    *" semaphore "*) info "Semaphore: someone signing in for the first time sees the customer projects within 10 minutes" ;;
+  esac
+}
+
 ask() {  # ask VARIABLE "question" [hidden]: read an answer from the keyboard; Enter keeps the current value
   local answer=""
   [ -t 0 ] || return 0
@@ -1130,7 +1258,7 @@ stage_certs() {  # certs <fullchain.pem> <privkey.pem>, or certs internal
 }
 
 # ======================================================================= driver
-usage() { sed -n '3,29p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//'; }
 
 show_status() {
   step "Installation status ($KIT_DIR)"
@@ -1181,7 +1309,7 @@ main() {
   case "$cmd" in
     status) show_status ;;
     all) run_all ;;
-    preflight | settings | network | images | start | glpi-api | forgejo-admin | tokens | platform | glue | harden | check | proxy | grafana | sso | console)
+    preflight | settings | network | images | start | glpi-api | forgejo-admin | tokens | platform | glue | harden | check | proxy | grafana | sso | console | sso-tools)
       shift
       run_stage "$cmd" "$@"
       ;;

@@ -14,6 +14,7 @@ tenancy:
 zabbix:
   customer_group_root: "Customers"                # host groups: Customers/<Tenant>/<Role>
   noc_usergroup: "MSP NOC engineers"              # read-write on every customer host group
+  manager_usergroup: "MSP managers"               # read on every customer host group (single sign-on, managers)
   service_usergroup: "MSP service accounts"       # read on every customer group (ticketing webhook user)
   customer_readonly_suffix: "read-only"           # one read-only user group per customer
   macro_template_group: "MSP/Customer settings"   # holds one macro template per customer

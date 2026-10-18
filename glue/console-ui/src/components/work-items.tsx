@@ -78,9 +78,11 @@ export function ProblemList({ problems, showCustomer = true, empty = "No open pr
                   <Button size="xs" variant={p.acknowledged ? "ghost" : "outline"} onClick={() => actions.acknowledge(p)}>
                     {p.acknowledged ? "Add note" : "Acknowledge"}
                   </Button>
-                  <Button size="xs" variant="outline" onClick={() => actions.investigate(p)}>
-                    <ScanSearch /> Investigate
-                  </Button>
+                  {actions.canInvestigate && (
+                    <Button size="xs" variant="outline" onClick={() => actions.investigate(p)}>
+                      <ScanSearch /> Investigate
+                    </Button>
+                  )}
                 </div>
               )}
             </div>

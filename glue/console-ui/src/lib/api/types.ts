@@ -43,6 +43,8 @@ export interface Me {
   accountUrl: string;
   timezone: string;
   platformDomain: string;
+  /** Investigate is set up: an administrator gave the console a model endpoint (CONSOLE_AI_URL) */
+  investigate: boolean;
 }
 
 // ---------------------------------------------------------------------------- tools and sign-in
@@ -327,7 +329,8 @@ export interface Ticket {
   late: boolean;
   group: string;
   technician: string;
-  source: "Monitoring" | "Configuration drift" | "Phone" | "Email" | "MSP Console";
+  /** GLPI: entered in GLPI itself (customer portal or a technician); Other: any other request source */
+  source: "Monitoring" | "Configuration drift" | "Phone" | "Email" | "MSP Console" | "GLPI" | "Other";
   device: string | null;
   link: string;
 }
@@ -564,6 +567,8 @@ export interface Investigation {
   draftNote: string | null;
   /** sample answer: no model was called (demo build) */
   sample: boolean;
+  /** why the run failed (status failed): the model endpoint did not give a usable answer */
+  error?: string | null;
 }
 
 // ---------------------------------------------------------------------------- requests

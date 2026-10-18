@@ -18,6 +18,18 @@ services:
     build: ./linux-server
     networks:
       msp: {ipv4_address: "${LAB_IP_ACME_SRV01:-172.30.0.202}"}
+  # The lab server's Zabbix agent, in the server's own network (it answers on the server's address, port 10050),
+  # so the console has CPU, memory, disk and traffic charts for a server.
+  lab-acme-srv01-agent:
+    image: zabbix/zabbix-agent2:${ZABBIX_IMAGE_TAG:-alpine-7.0.31}
+    network_mode: "service:lab-acme-srv01"
+    depends_on: [lab-acme-srv01]
+    # Agent 2 stops when one of its plugins starts slowly on a busy machine; it starts fine the next time.
+    restart: on-failure
+    environment:
+      ZBX_HOSTNAME: acme-jkt01-srv01
+      ZBX_PASSIVESERVERS: "${MSP_SUBNET:-172.30.0.0/24}"
+      ZBX_ACTIVE_ALLOW: "false"
   lab-bankx-rtr01:
     image: msp/lab-fakenos:1.2.1
     environment:

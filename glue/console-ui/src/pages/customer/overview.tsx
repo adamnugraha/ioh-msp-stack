@@ -103,7 +103,7 @@ export function CustomerOverview() {
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
-        <Section title="Availability" description={s.sla ? <>Counted by Zabbix from availability problems of High or worse. {s.sla && <span>Last month {pct(s.sla.previous, 3)}.</span>}</> : undefined}>
+        <Section title="Availability" description={s.sla ? <>Counted by Zabbix from availability problems of High or worse. {s.sla && s.sla.previous !== null && <span>Last month {pct(s.sla.previous, 3)}.</span>}</> : undefined}>
           <div className="space-y-4 p-4">
             {s.sla ? <BudgetMeter sla={s.sla} /> : <p className="text-[13px] text-muted-foreground">The customer has no availability agreement in Zabbix yet. It is created with the customer's set-up.</p>}
             <DowntimeColumns days={data.downtimeByDay} />
