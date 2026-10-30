@@ -1260,8 +1260,8 @@ PY
     cp edge-collector/compose.yaml "$edge/compose.yaml"
     printf 'ZBX_HOSTNAME=proxy-bankx-01\nZBX_SERVER_HOST=zabbix-server\nZBX_TLSPSKIDENTITY=psk-proxy-bankx-01\nZABBIX_IMAGE_TAG=%s\n' \
       "$ZABBIX_IMAGE_TAG" > "$edge/.env"
-    printf '%s\n' "$psk" > "$edge/zabbix_proxy.psk"
-    chmod 644 "$edge/zabbix_proxy.psk"
+    ( umask 077; printf '%s\n' "$psk" > "$edge/zabbix_proxy.psk" )
+    chmod 640 "$edge/zabbix_proxy.psk"
   fi
   if ! out=$(docker compose -p msp-lab-edge-bankx -f "$edge/compose.yaml" -f lab/compose.edge-lab.yaml up -d 2>&1); then
     printf '%s\n' "$out" | tail -n 15
