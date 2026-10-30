@@ -18,6 +18,8 @@
 #   --public-key FILE     your SSH public key, for that client
 #   --user NAME           the Linux account for that key (default: your user name here)
 #   --collectors-from "CIDR ..."  open port 10051 to collectors at these addresses
+#   --autoinstall FILE    the machine then installs the whole platform by itself, with the settings
+#                         in FILE (environments/autoinstall.conf.example); 40 to 75 minutes
 #   --dry-run             print the gcloud commands without running them
 #
 # Running it again is safe: what exists is kept, and the firewall rules follow the options given.
@@ -27,7 +29,7 @@ set -euo pipefail
 export CLOUDSDK_CORE_DISABLE_PROMPTS=1
 
 PROJECT="" NAME=msp-test-01 ZONE=asia-southeast2-a MACHINE=e2-standard-4 DISK=100 RANGE=10.200.0.0/24
-SSH_FROM="" PUBKEY="" LINUX_USER=${USER:-$(id -un)} COLLECTORS="" DRY=0
+SSH_FROM="" PUBKEY="" LINUX_USER=${USER:-$(id -un)} COLLECTORS="" AUTOCONF="" DRY=0
 NETWORK=msp-net TAG=msp-platform IAP_RANGE=35.235.240.0/20
 
 if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; R=$'\033[31m'; N=$'\033[0m'; else B=; G=; R=; N=; fi
@@ -35,7 +37,7 @@ step() { printf '\n%s== %s%s\n' "$B" "$*" "$N"; }
 ok()   { printf '  %sOK%s     %s\n' "$G" "$N" "$*"; }
 info() { printf '         %s\n' "$*"; }
 fail() { printf '\n  %sSTOPPED%s %s\n' "$R" "$N" "$1"; [ -n "${2:-}" ] && printf '  Fix:    %s\n' "$2"; exit 1; }
-usage() { sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,26p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -49,6 +51,7 @@ while [ $# -gt 0 ]; do
     --public-key) PUBKEY=${2:-}; shift 2 ;;
     --user) LINUX_USER=${2:-}; shift 2 ;;
     --collectors-from) COLLECTORS=${2:-}; shift 2 ;;
+    --autoinstall) AUTOCONF=${2:-}; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) fail "unknown option '$1'" "./environments/gcp/create.sh --help lists the options" ;;
@@ -90,11 +93,19 @@ sys.exit(1 if errors else 0)
 PY
 if [ -n "$SSH_FROM" ]; then
   [ -n "$PUBKEY" ] || fail "--ssh-from needs --public-key, the key your SSH client logs in with" "add --public-key ~/.ssh/id_ed25519.pub (upload the file to Cloud Shell first: the three-dot menu, Upload)"
-  [ -r "$PUBKEY" ] && grep -qE '^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp[0-9]+) ' "$PUBKEY" ||
+  if ! { [ -r "$PUBKEY" ] && grep -qE '^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp[0-9]+) ' "$PUBKEY"; }; then
     fail "$PUBKEY is not an SSH public key" "give the .pub file, the one that starts with ssh-ed25519 or ssh-rsa"
+  fi
 fi
 REGION=${ZONE%-*}
 SUBNET="$NETWORK-$REGION"
+# The automatic install: the machine's startup script, made from the settings file.
+STARTUP=""
+if [ -n "$AUTOCONF" ]; then
+  STARTUP=$(mktemp)
+  trap 'rm -f "$STARTUP"' EXIT
+  "$(dirname "$0")/../bootstrap.sh" "$AUTOCONF" ENVIRONMENT=gcp > "$STARTUP" || exit 1   # it says what to correct
+fi
 
 run() {  # run ARGS...: gcloud ARGS, or only show it in a dry run
   if [ "$DRY" = 1 ]; then printf '  would run: gcloud'; printf ' %q' "$@"; printf '\n'; return 0; fi
@@ -161,16 +172,25 @@ info "Nothing else gets in: browsers come through the Cloudflare Tunnel, which c
 step "Virtual machine $NAME"
 if exists compute instances describe "$NAME" --zone "$ZONE" --project "$PROJECT"; then
   ok "virtual machine $NAME exists ($(gcloud compute instances describe "$NAME" --zone "$ZONE" --project "$PROJECT" --format='value(status)'))"
+  if [ -n "$STARTUP" ]; then
+    run compute instances add-metadata "$NAME" --zone "$ZONE" --project "$PROJECT" \
+      --metadata-from-file "startup-script=$STARTUP" --quiet
+    ok "startup script updated from $AUTOCONF: it runs at the machine's next start"
+    info "On a machine that has never installed the platform, start it now:"
+    info "  gcloud compute ssh $NAME --project $PROJECT --zone $ZONE --tunnel-through-iap --command 'sudo google_metadata_script_runner startup'"
+  fi
 else
   args=(compute instances create "$NAME" --project "$PROJECT" --zone "$ZONE" --machine-type "$MACHINE"
         --image-family ubuntu-2404-lts-amd64 --image-project ubuntu-os-cloud
         --boot-disk-size "${DISK}GB" --boot-disk-type pd-balanced
         --network "$NETWORK" --subnet "$SUBNET" --tags "$TAG" --quiet)
+  if [ -n "$STARTUP" ]; then args+=(--metadata-from-file "startup-script=$STARTUP"); fi
   if ! run "${args[@]}"; then
     fail "the virtual machine was not created (Google's reason is above)" \
       "a quota or a missing machine type: another --machine or --zone; a new project: wait a minute after the step above and run the command again"
   fi
   ok "virtual machine $NAME created: $MACHINE, Ubuntu 24.04, ${DISK} GB"
+  if [ -n "$STARTUP" ]; then ok "the automatic install starts with the machine (settings from $AUTOCONF)"; fi
 fi
 if [ -n "$SSH_FROM" ]; then
   # The guest agent turns this metadata into a Linux account with sudo and the key. A file, because
@@ -193,8 +213,15 @@ step "Next"
 info "Connect (the first time gcloud makes an SSH key; press Enter at its questions):"
 info "  gcloud compute ssh $NAME --project $PROJECT --zone $ZONE --tunnel-through-iap"
 if [ -n "$SSH_FROM" ]; then info "or from your own client:  ssh $LINUX_USER@$ADDRESS"; fi
-info "Then follow environments/gcp/README.md from step 4, or the install guide with"
-info "Where the server runs: Google Cloud. On the server, prepare-server.sh takes --no-firewall:"
-info "this network's firewall protects the server."
+if [ -n "$AUTOCONF" ]; then
+  info "The machine installs the platform by itself, 40 to 75 minutes. How far it is, any time:"
+  info "  gcloud compute ssh $NAME --project $PROJECT --zone $ZONE --tunnel-through-iap --command 'sudo /opt/ioh-msp-stack/scripts/autoinstall.sh status'"
+  info "Once finished, the same command shows the first sign-in. A rebuild later:"
+  info "  ./environments/gcp/delete.sh --project $PROJECT --yes, then this create command again"
+else
+  info "Then follow environments/gcp/README.md from step 4, or the install guide with"
+  info "Where the server runs: Google Cloud. On the server, prepare-server.sh takes --no-firewall:"
+  info "this network's firewall protects the server."
+fi
 info "Stop it when you are not testing (the disk still costs a little):"
 info "  gcloud compute instances stop $NAME --zone $ZONE --project $PROJECT"

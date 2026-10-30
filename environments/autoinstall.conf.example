@@ -1,0 +1,73 @@
+# Settings for the automatic install (scripts/autoinstall.sh). Copy this file, fill in the four
+# values marked "required", and hand it to the create script of your environment:
+#
+#   Google Cloud:  ./environments/gcp/create.sh --project <project ID> --autoinstall my.conf
+#   AWS:           ./environments/aws/create.sh --ssh-from "<your address>/32" --autoinstall my.conf
+#   A VPS:         ./environments/bootstrap.sh my.conf ENVIRONMENT=vps > msp-autoinstall.sh
+#                  (then environments/vps/README.md, "Automatic install")
+#
+# Keep the file: a rebuild later is the delete script, then the same create command with this file.
+# It may hold your tunnel token, so keep it as private as a password (chmod 600 my.conf).
+# A value with spaces needs quotes. Lines starting with # are notes.
+
+# Where the server runs: gcp, aws, vps or ioh. The Google Cloud and AWS create scripts fill it in.
+ENVIRONMENT=
+
+# Required. A domain on Cloudflare: every tool gets a name directly under it (console.<domain>,
+# nautobot.<domain> and so on). One domain serves one platform.
+DOMAIN=
+
+# Required. Your own staff sign-in for the MSP Console: e-mail address and full name.
+STAFF_EMAIL=
+STAFF_NAME=""
+
+# Optional. The administrator address in Nautobot and Forgejo.
+NOC_EMAIL=
+
+# Optional. The Cloudflare Tunnel's token: Cloudflare dashboard, Networking, Tunnels, your tunnel,
+# the long string after "cloudflared service install". With it, the server connects the tunnel by
+# itself, and a rebuilt server takes over the same names. Without it, connect later on the server:
+# sudo /opt/ioh-msp-stack/scripts/autoinstall.sh tunnel. The token ends up in the server's start
+# script, which people who can manage the server in the cloud console can read.
+CLOUDFLARE_TUNNEL_TOKEN=
+
+# Two made-up customers with simulated devices, to see the console working: yes or no.
+SAMPLES=yes
+
+# Staff sign in to Nautobot, Zabbix, Semaphore and Forgejo with Keycloak too: yes or no.
+SSO_TOOLS=yes
+
+# Customer dashboards (Grafana): yes or no.
+GRAFANA=no
+
+# A nightly backup to /var/backups/msp at 00:15, keeping 14: yes or no.
+BACKUP=yes
+
+# Time zone, the platform's network and Docker's address pool. The defaults suit Google Cloud and
+# a VPS; on AWS the create script picks a pool clear of AWS's own network.
+TIMEZONE=Asia/Jakarta
+SUBNET=172.30.0.0/24
+POOL=172.31.0.0/16
+
+# VPS only, required there: the addresses allowed to reach SSH, for the server's own firewall
+# (open https://checkip.amazonaws.com on the PC you connect from), for example "203.0.113.7/32".
+SSH_FROM=""
+
+# IOH private cloud only: the NOC and VPN ranges, and IOH's web proxy if the server needs one.
+ADMIN_NETWORKS=""
+PROXY=
+PROXY_CA=
+
+# Optional. A Docker Hub account, when the server shares its Internet address with many others
+# (Docker Hub allows 100 anonymous downloads per 6 hours per address). The token is a personal
+# access token with read-only access.
+DOCKERHUB_USER=
+DOCKERHUB_TOKEN=
+
+# The Linux account that owns the kit and runs the platform (sudo -iu msp to work as it).
+INSTALL_USER=msp
+
+# The kit version the server downloads. Empty: the version of the kit this file came with, from
+# GitHub, with its checksum from dist/SHA256SUMS there.
+KIT_URL=
+KIT_SHA256=

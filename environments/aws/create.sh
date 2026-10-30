@@ -17,6 +17,8 @@
 #   --public-key FILE      log in with your own SSH key; without it the script makes a key pair
 #                          and saves its private key as NAME.pem here
 #   --collectors-from "CIDR ..."  open port 10051 to collectors at these addresses
+#   --autoinstall FILE     the instance then installs the whole platform by itself, with the
+#                          settings in FILE (environments/autoinstall.conf.example); 40 to 75 minutes
 #   --dry-run              print the AWS CLI commands without running them
 #
 # Running it again is safe: what exists is kept; new --ssh-from addresses are added.
@@ -25,7 +27,7 @@
 set -euo pipefail
 export AWS_PAGER=""
 
-SSH_FROM="" REGION=ap-southeast-3 NAME=msp-test-01 TYPE=m7i-flex.xlarge DISK=100 PUBKEY="" COLLECTORS="" DRY=0
+SSH_FROM="" REGION=ap-southeast-3 NAME=msp-test-01 TYPE=m7i-flex.xlarge DISK=100 PUBKEY="" COLLECTORS="" AUTOCONF="" DRY=0
 AMI_PARAM=/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
 
 if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; N=$'\033[0m'; else B=; G=; Y=; R=; N=; fi
@@ -34,7 +36,7 @@ ok()   { printf '  %sOK%s     %s\n' "$G" "$N" "$*"; }
 info() { printf '         %s\n' "$*"; }
 warn() { printf '  %sWARN%s   %s\n' "$Y" "$N" "$1"; [ -n "${2:-}" ] && printf '         Fix: %s\n' "$2"; return 0; }
 fail() { printf '\n  %sSTOPPED%s %s\n' "$R" "$N" "$1"; [ -n "${2:-}" ] && printf '  Fix:    %s\n' "$2"; exit 1; }
-usage() { sed -n '3,23p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -45,6 +47,7 @@ while [ $# -gt 0 ]; do
     --disk) DISK=${2:-}; shift 2 ;;
     --public-key) PUBKEY=${2:-}; shift 2 ;;
     --collectors-from) COLLECTORS=${2:-}; shift 2 ;;
+    --autoinstall) AUTOCONF=${2:-}; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) fail "unknown option '$1'" "./environments/aws/create.sh --help lists the options" ;;
@@ -78,9 +81,13 @@ for e in errors:
     print("  FAIL   " + e)
 sys.exit(1 if errors else 0)
 PY
+if [ -n "$AUTOCONF" ]; then
+  "$(dirname "$0")/../bootstrap.sh" --check "$AUTOCONF" ENVIRONMENT=aws || exit 1   # it says what to correct
+fi
 if [ -n "$PUBKEY" ]; then
-  [ -r "$PUBKEY" ] && grep -qE '^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp[0-9]+) ' "$PUBKEY" ||
+  if ! { [ -r "$PUBKEY" ] && grep -qE '^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp[0-9]+) ' "$PUBKEY"; }; then
     fail "$PUBKEY is not an SSH public key" "give the .pub file, the one that starts with ssh-ed25519 or ssh-rsa"
+  fi
 fi
 
 aws_() {  # aws_ ARGS...: the AWS CLI in the chosen Region, or only show the command in a dry run
@@ -205,13 +212,27 @@ ID=$(ask ec2 describe-instances --filters "Name=tag:Name,Values=$NAME" "Name=ins
   --query 'Reservations[0].Instances[0].InstanceId')
 if [ -n "$ID" ]; then
   ok "instance $ID exists ($(ask ec2 describe-instances --instance-ids "$ID" --query 'Reservations[0].Instances[0].State.Name'))"
+  if [ -n "$AUTOCONF" ]; then
+    warn "the automatic install runs only at an instance's first start, so nothing changes on $NAME" \
+      "for a fresh install: ./environments/aws/delete.sh, then this command again"
+  fi
 else
+  # The automatic install: user data made from the settings file, with the pool chosen above.
+  USERDATA=""
+  if [ -n "$AUTOCONF" ]; then
+    USERDATA=$(mktemp)
+    trap 'rm -f "$USERDATA"' EXIT
+    "$(dirname "$0")/../bootstrap.sh" "$AUTOCONF" ENVIRONMENT=aws POOL="$POOL" > "$USERDATA" || exit 1
+    [ "$(wc -c < "$USERDATA")" -le 16384 ] || fail "the start script is larger than AWS's 16 KB for user data" \
+      "shorten long values in $AUTOCONF"
+  fi
   args=(ec2 run-instances --image-id "${AMI:-<Ubuntu 24.04 image>}" --instance-type "$TYPE" --key-name "$NAME"
         --security-group-ids "$SG"
         --block-device-mappings "DeviceName=/dev/sda1,Ebs={VolumeSize=$DISK,VolumeType=gp3,DeleteOnTermination=true}"
         --metadata-options "HttpTokens=required,HttpEndpoint=enabled"
         --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$NAME}]" "ResourceType=volume,Tags=[{Key=Name,Value=$NAME}]"
         --query 'Instances[0].InstanceId' --output text)
+  if [ -n "$USERDATA" ]; then args+=(--user-data "file://$USERDATA"); fi
   if [ "$DRY" = 1 ]; then
     aws_ "${args[@]}"
   else
@@ -221,6 +242,7 @@ else
         "on the free plan, use --type m7i-flex.large, or upgrade to the paid plan (the credits stay); another type if $TYPE is not offered in $REGION"
     fi
     ok "instance $ID started: $TYPE, Ubuntu 24.04, ${DISK} GB"
+    if [ -n "$USERDATA" ]; then ok "the automatic install starts with the instance (settings from $AUTOCONF)"; fi
     info "waiting until it runs..."
     aws ec2 wait instance-running --instance-ids "$ID" --region "$REGION"
   fi
@@ -230,11 +252,19 @@ if [ "$DRY" = 1 ]; then IP="<its public address>"; ID="<instance ID>"; fi
 
 # ------------------------------------------------------------------ next
 step "Next"
-if [ -n "$KEYFILE" ]; then info "Connect from your PC:  ssh -i $KEYFILE ubuntu@$IP"
-else info "Connect from your PC:  ssh ubuntu@$IP"; fi
-info "Then follow environments/aws/README.md from step 5, or the install guide with"
-info "Where the server runs: AWS. On the server, prepare-server.sh takes --no-firewall --pool $POOL:"
-info "the security group protects the server, and the pool stays clear of AWS's network."
+LOGIN="ssh ubuntu@$IP"
+if [ -n "$KEYFILE" ]; then LOGIN="ssh -i $KEYFILE ubuntu@$IP"; fi
+info "Connect from your PC:  $LOGIN"
+if [ -n "$AUTOCONF" ]; then
+  info "The instance installs the platform by itself, 40 to 75 minutes. How far it is, any time:"
+  info "  $LOGIN sudo /opt/ioh-msp-stack/scripts/autoinstall.sh status"
+  info "Once finished, the same command shows the first sign-in. A rebuild later:"
+  info "  ./environments/aws/delete.sh, then this create command again"
+else
+  info "Then follow environments/aws/README.md from step 5, or the install guide with"
+  info "Where the server runs: AWS. On the server, prepare-server.sh takes --no-firewall --pool $POOL:"
+  info "the security group protects the server, and the pool stays clear of AWS's network."
+fi
 info "The public address changes after a stop and start; this shows the current one:"
 info "  aws ec2 describe-instances --instance-ids $ID --region $REGION --query 'Reservations[0].Instances[0].PublicIpAddress' --output text"
 info "Stop it when you are not testing (the disk still costs a little):"

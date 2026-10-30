@@ -11,6 +11,31 @@ plus about US$13 a month for the 100 GB disk and a few dollars for its external 
 machine costs only its disk. New Google Cloud accounts get a Free Trial of US$300 for 90 days, with
 no automatic charge when it ends.
 
+## Automatic install
+
+The whole platform in one command, after the Cloudflare side is ready (once per domain:
+[../cloudflare-tunnel.md](../cloudflare-tunnel.md), sections 3 and 4; keep the tunnel's token). In
+Cloud Shell, with the kit there (step 2 below):
+
+```bash
+cd ~/ioh-msp-stack
+cp environments/autoinstall.conf.example ~/msp.conf && chmod 600 ~/msp.conf
+nano ~/msp.conf          # DOMAIN, STAFF_EMAIL, STAFF_NAME, CLOUDFLARE_TUNNEL_TOKEN
+./environments/gcp/create.sh --project <project ID> --autoinstall ~/msp.conf
+```
+
+The machine installs everything by itself in 40 to 75 minutes. How far it is, and once finished the
+first sign-in:
+
+```bash
+gcloud compute ssh msp-test-01 --project <project ID> --zone asia-southeast2-a --tunnel-through-iap \
+    --command 'sudo /opt/ioh-msp-stack/scripts/autoinstall.sh status'
+```
+
+Rebuild later with the same file: `./environments/gcp/delete.sh --project <project ID> --yes`, then
+the same `create.sh` command. Cloud Shell keeps `~/msp.conf` between sessions. The steps below do
+the same by hand.
+
 ## Steps
 
 1. **Project.** In the Google Cloud console (console.cloud.google.com), create a project, for
@@ -21,7 +46,7 @@ no automatic charge when it ends.
    `gcloud` is ready and signed in. Get the kit there, only to run its scripts:
 
    ```bash
-   curl -fL -o kit.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.3.0.zip
+   curl -fL -o kit.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.4.0.zip
    unzip -q kit.zip && cd ioh-msp-stack
    ```
 
@@ -47,7 +72,7 @@ no automatic charge when it ends.
 5. **Prepare the server.** On the server, as your own account:
 
    ```bash
-   curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.3.0.zip
+   curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.4.0.zip
    sha256sum /tmp/ioh-msp-stack.zip      # must equal the line for this file in dist/SHA256SUMS
    command -v unzip >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y unzip)
    sudo mkdir -p /opt/ioh-msp-stack && sudo chown "$(id -un):" /opt/ioh-msp-stack

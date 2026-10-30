@@ -15,6 +15,36 @@ here covers one environment, step by step:
 The interactive install guide "IOH MSP Platform Install" has the same choice at the top ("Where the
 server runs"): every command then matches the environment and your own values.
 
+## Automatic install
+
+On Google Cloud, AWS and a VPS the whole platform can install itself, with no questions on the way.
+You fill in one settings file ([autoinstall.conf.example](autoinstall.conf.example): your Cloudflare
+domain, your staff e-mail and name, and the tunnel's token), then:
+
+| Environment | One command | Where |
+|---|---|---|
+| Google Cloud | `./environments/gcp/create.sh --project <project ID> --autoinstall my.conf` | Cloud Shell |
+| AWS | `./environments/aws/create.sh --ssh-from "<your address>/32" --autoinstall my.conf` | AWS CloudShell |
+| A VPS | `./environments/bootstrap.sh my.conf ENVIRONMENT=vps SSH_FROM="<your address>/32" > msp-autoinstall.sh`, then that script as the provider's user data, or run on the server as root | Any Linux or macOS shell |
+
+The server then runs `scripts/autoinstall.sh` as a service: Ubuntu's updates, Docker, the account
+`msp` that owns the kit, every installer stage, HTTPS, the Cloudflare Tunnel, staff sign-in, the MSP
+Console, sign-in to the tools, the sample customers and the nightly backup. It takes 40 to 75
+minutes; `sudo /opt/ioh-msp-stack/scripts/autoinstall.sh status` on the server shows how far it is,
+the log-in banner shows the same line, and once finished the same command shows the first sign-in.
+A step that fails stops the install with its reason and fix; `sudo /opt/ioh-msp-stack/scripts/autoinstall.sh start`
+after the fix continues with that step, and so does a restart of the server.
+
+**A rebuild** is the environment's delete script, then the same create command with the same file.
+The Cloudflare side (the tunnel, its routes and Cloudflare Access) stays as it is, so the new server
+takes over the same names by itself. Nothing from the old server is carried over: a rebuilt platform
+starts empty, with the sample customers if the file says so.
+
+The Cloudflare side is prepared once per domain, by hand, before the first build:
+[cloudflare-tunnel.md](cloudflare-tunnel.md), sections 3 and 4 (Access, then the tunnel and its
+routes); copy the tunnel's token into the settings file instead of running Cloudflare's install
+command.
+
 ## The same everywhere
 
 - Ubuntu Server 24.04 LTS. For a trial, 4 virtual CPUs, 16 GB of memory and 100 GB of disk run

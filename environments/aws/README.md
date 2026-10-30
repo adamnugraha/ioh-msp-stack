@@ -12,6 +12,30 @@ accounts start on the free plan with up to US$200 of credits for six months; on 
 (2 vCPU, 8 GB, enough for a trial) is one of the sizes allowed. A larger size needs the paid plan,
 and the credits left still apply there.
 
+## Automatic install
+
+The whole platform in one command, after the Cloudflare side is ready (once per domain:
+[../cloudflare-tunnel.md](../cloudflare-tunnel.md), sections 3 and 4; keep the tunnel's token) and
+the Jakarta Region is enabled (step 1 below). In AWS CloudShell, with the kit there (step 2):
+
+```bash
+cd ~/ioh-msp-stack
+cp environments/autoinstall.conf.example ~/msp.conf && chmod 600 ~/msp.conf
+nano ~/msp.conf          # DOMAIN, STAFF_EMAIL, STAFF_NAME, CLOUDFLARE_TUNNEL_TOKEN
+./environments/aws/create.sh --ssh-from "<your address>/32" --autoinstall ~/msp.conf
+```
+
+Download `msp-test-01.pem` to your PC (step 4 below). The instance installs everything by itself in
+40 to 75 minutes. How far it is, and once finished the first sign-in:
+
+```bash
+ssh -i msp-test-01.pem ubuntu@<its address> sudo /opt/ioh-msp-stack/scripts/autoinstall.sh status
+```
+
+Rebuild later with the same file: `./environments/aws/delete.sh`, then the same `create.sh` command
+(it makes a new key pair; download the new `.pem`). CloudShell keeps `~/msp.conf` between sessions.
+The steps below do the same by hand.
+
 ## Steps
 
 1. **Account and the Jakarta Region.** Jakarta is an opt-in Region: in the AWS console, open your
@@ -22,7 +46,7 @@ and the credits left still apply there.
    where the AWS CLI is ready and signed in. Get the kit there, only to run its scripts:
 
    ```bash
-   curl -fL -o kit.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.3.0.zip
+   curl -fL -o kit.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.4.0.zip
    unzip -q kit.zip && cd ioh-msp-stack
    ```
 
@@ -56,7 +80,7 @@ and the credits left still apply there.
 6. **Prepare the server.** On the server, as `ubuntu`:
 
    ```bash
-   curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.3.0.zip
+   curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.4.0.zip
    sha256sum /tmp/ioh-msp-stack.zip      # must equal the line for this file in dist/SHA256SUMS
    command -v unzip >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y unzip)
    sudo mkdir -p /opt/ioh-msp-stack && sudo chown "$(id -un):" /opt/ioh-msp-stack

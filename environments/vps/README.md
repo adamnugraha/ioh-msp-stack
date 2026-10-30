@@ -6,6 +6,29 @@ protecting: its firewall for SSH, and the kit's listen settings for the ports Do
 Browsers reach the tools through a Cloudflare Tunnel. Use it for trials, with the sample customers or
 IOH's own test equipment: customers' data belongs on IOH's servers unless IOH approves otherwise.
 
+## Automatic install
+
+The whole platform with one script, after the Cloudflare side is ready (once per domain:
+[../cloudflare-tunnel.md](../cloudflare-tunnel.md), sections 3 and 4; keep the tunnel's token).
+Fill in a copy of [../autoinstall.conf.example](../autoinstall.conf.example), then turn it into the
+start script, in any Linux or macOS shell with the kit (or in the install guide, choice "Automatic",
+which writes the same script for you):
+
+```bash
+./environments/bootstrap.sh my.conf ENVIRONMENT=vps SSH_FROM="<your address>/32" > msp-autoinstall.sh
+```
+
+Then either give `msp-autoinstall.sh` to the provider as user data (cloud-init) when you order the
+server, or run it on the new server as root:
+
+```bash
+ssh root@<server address> 'bash -s' < msp-autoinstall.sh
+```
+
+The server installs everything by itself in 40 to 75 minutes. How far it is, and once finished the
+first sign-in: `sudo /opt/ioh-msp-stack/scripts/autoinstall.sh status` on the server. To rebuild,
+reinstall the VPS with Ubuntu 24.04 in the provider's panel and run the same script again.
+
 ## Steps
 
 1. **Order the server.**
@@ -40,7 +63,7 @@ IOH's own test equipment: customers' data belongs on IOH's servers unless IOH ap
 4. **Prepare the server.**
 
    ```bash
-   curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.3.0.zip
+   curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.4.0.zip
    sha256sum /tmp/ioh-msp-stack.zip      # must equal the line for this file in dist/SHA256SUMS
    command -v unzip >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y unzip)
    sudo mkdir -p /opt/ioh-msp-stack && sudo chown "$(id -un):" /opt/ioh-msp-stack
