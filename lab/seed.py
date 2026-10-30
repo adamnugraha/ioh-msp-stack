@@ -51,7 +51,7 @@ def ip_of(container):
         ["docker", "inspect", "-f", "{{.NetworkSettings.Networks.msp.IPAddress}}", container], text=True).strip()
 
 
-# Sample customers and their simulated devices: name, customer, site, role, platform, type, status, container, serial
+# The two sample customers, and those of their devices that are simulated containers (switched by --offline)
 TENANT_NAMES = {"acme": "PT ACME Retail Indonesia", "bankx": "PT Bank Contoh Tbk"}
 SIMULATED = {"jkt01-rtr01": "acme", "jkt01-srv01": "acme", "ckr01-rtr01": "bankx"}
 
