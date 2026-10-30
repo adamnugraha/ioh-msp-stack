@@ -19,6 +19,7 @@
 #   sso-tools [grafana forgejo nautobot semaphore zabbix]   staff sign in to the tools with Keycloak too
 #   chat telegram|teams|email|test|off   problems on managed devices to the NOC chat (Versus Incident)
 #   certs <fullchain.pem> <privkey.pem>   use IOH certificates instead of Caddy's own (certs internal: back)
+#   samples [off]   two made-up customers with simulated devices, to practise on (off: stop monitoring them)
 #
 # Every stage can run again safely. A failed stage stops with the reason, the fix and the command
 # that continues after the fix. Output goes to install.log.
@@ -1155,6 +1156,132 @@ chat_test() {  # one test message through Versus to every channel that is switch
   fi
 }
 
+# Two made-up customers with simulated devices (the lab's), so the console has something to show:
+# PT ACME Retail Indonesia (acme) with a router, a server and a planned switch, and PT Bank Contoh Tbk
+# (bankx) with a router behind its own edge collector. "samples off" sets their devices Offline in
+# Nautobot, so Zabbix keeps their history and stops watching them; the customers stay.
+SAMPLE_CODES="acme bankx"
+stage_samples() {  # samples [off]
+  local mode=${1:-on} out code
+  step "Sample customers with simulated devices"
+  case "$mode" in on | off) ;; *) fail "unknown option '$mode' for samples" "./scripts/install.sh samples (or: samples off)" ;; esac
+  load_env
+  docker image inspect "$GLUE_TAG" >/dev/null 2>&1 || fail "the msp-glue image $GLUE_TAG is missing (new kit version)" "./scripts/install.sh images"
+  health_is msp-glue healthy || fail "msp-glue is not running" "./scripts/install.sh glue"
+  health_is nautobot healthy || fail "Nautobot is not running" "docker compose up -d nautobot, then the same command again"
+  # seed.py talks to Nautobot from inside the platform network, as the owner of the kit folder.
+  local seed=(docker run --rm --network msp --user "$(id -u):$(id -g)" -v "$KIT_DIR:/kit" -w /kit
+              -e NAUTOBOT_API=http://nautobot:8080/api/ -e NO_PROXY=nautobot -e no_proxy=nautobot)
+
+  if [ "$mode" = off ]; then
+    if ! out=$("${seed[@]}" --entrypoint python "$GLUE_TAG" lab/seed.py --offline 2>&1); then
+      printf '%s\n' "$out" | tail -n 8
+      fail "Nautobot did not take the change" "read the error above; docker compose logs --tail 30 nautobot"
+    fi
+    printf '%s\n' "$out" | sed 's/^/         /'
+    case "$out" in *"No sample devices"*) return 0 ;; esac
+    for code in $SAMPLE_CODES; do dc exec -T msp-glue mspctl device sync "$code" >/dev/null 2>&1 || true; done
+    ok "the sample devices are Offline: Zabbix keeps their history and stops watching them, so no alerts or tickets"
+    info "The two customers stay in the console and the tools. ./scripts/install.sh samples switches the devices on again."
+    return 0
+  fi
+
+  # Fixed addresses .201 to .204 of the platform network, as in the lab: a restart of Docker must not
+  # hand a device's address to another container while Nautobot and Zabbix still point at it.
+  local subnet ips taken
+  subnet=$(docker network inspect msp -f '{{(index .IPAM.Config 0).Subnet}}' 2>/dev/null) ||
+    fail "the platform network msp does not exist" "./scripts/install.sh network"
+  ips=$(python3 - "$subnet" <<'PY'
+import ipaddress, sys
+net = ipaddress.ip_network(sys.argv[1])
+if net.num_addresses < 256:
+    sys.exit(1)
+print(" ".join(str(net.network_address + n) for n in (201, 202, 203, 204)))
+PY
+  ) || fail "the platform network $subnet is smaller than a /24, so it has no addresses .201 to .204 for the sample devices" \
+    "the samples need a platform network of a /24 or larger"
+  read -r LAB_IP_ACME_RTR01 LAB_IP_ACME_SRV01 LAB_IP_BANKX_RTR01 LAB_IP_BANKX_PROXY <<<"$ips"
+  export LAB_IP_ACME_RTR01 LAB_IP_ACME_SRV01 LAB_IP_BANKX_RTR01 LAB_IP_BANKX_PROXY MSP_SUBNET=$subnet
+  export ZABBIX_IMAGE_TAG=${ZABBIX_IMAGE_TAG:-alpine-7.0.31}
+  taken=$(docker network inspect msp -f '{{range .Containers}}{{.Name}} {{.IPv4Address}}{{"\n"}}{{end}}' |
+    awk -v ips=" $ips " '{ split($2, a, "/"); if (index(ips, " " a[1] " ") && $1 !~ /^msp-lab-(devices|edge-bankx)-/) print $1 " has " a[1] }')
+  [ -z "$taken" ] || fail "an address the sample devices need is in use ($taken)" \
+    "give that container another address: docker compose up -d --force-recreate <its service>, then the same command again"
+
+  # The simulated devices' images, built here like the platform's own (through the web proxy if there is one)
+  local build=(docker build -q) ca_dirs="lab/fakenos/certs lab/linux-server/certs" d spec tag dir
+  if [ -n "${HTTPS_PROXY:-${https_proxy:-}}" ]; then
+    local p=${HTTPS_PROXY:-${https_proxy:-}}
+    build+=(--network host --build-arg "HTTPS_PROXY=$p" --build-arg "https_proxy=$p"
+            --build-arg "HTTP_PROXY=${HTTP_PROXY:-$p}" --build-arg "http_proxy=${HTTP_PROXY:-$p}")
+  fi
+  if [ -z "${CA_FILE:-}" ] && [ -f /usr/local/share/ioh-msp/proxy-ca.pem ]; then CA_FILE=/usr/local/share/ioh-msp/proxy-ca.pem; fi
+  for spec in "msp/lab-fakenos:1.2.1 lab/fakenos" "msp/lab-linux:1.0 lab/linux-server"; do
+    read -r tag dir <<<"$spec"
+    docker image inspect "$tag" >/dev/null 2>&1 && continue
+    if [ -n "${CA_FILE:-}" ]; then for d in $ca_dirs; do split_ca "$CA_FILE" "$d"; done; fi
+    info "building $tag (a simulated device; the first time takes a few minutes)"
+    if ! "${build[@]}" -t "$tag" "$dir" >/dev/null; then
+      for d in $ca_dirs; do rm -f "$d"/custom-ca-*.crt; done
+      fail "the image $tag did not build" \
+        "it needs pypi.org and dl-cdn.alpinelinux.org; behind a proxy export HTTPS_PROXY (and CA_FILE), then the same command again"
+    fi
+  done
+  for d in $ca_dirs; do rm -f "$d"/custom-ca-*.crt; done
+
+  if ! out=$(docker compose -p msp-lab-devices -f lab/compose.devices.yaml up -d --no-build 2>&1); then
+    printf '%s\n' "$out" | tail -n 15
+    fail "the simulated devices did not start" "read Docker's message above, then the same command again"
+  fi
+  ok "simulated devices running: jkt01-rtr01 at $LAB_IP_ACME_RTR01, jkt01-srv01 at $LAB_IP_ACME_SRV01, ckr01-rtr01 at $LAB_IP_BANKX_RTR01"
+
+  if ! out=$("${seed[@]}" -e MSP_SUBNET -e LAB_IP_ACME_RTR01 -e LAB_IP_ACME_SRV01 -e LAB_IP_BANKX_RTR01 \
+             --entrypoint python "$GLUE_TAG" lab/seed.py 2>&1); then
+    printf '%s\n' "$out" | tail -n 8
+    fail "the sample customers could not be written to Nautobot" "read the error above; docker compose logs --tail 30 nautobot"
+  fi
+  printf '%s\n' "$out" | sed 's/^/         /'
+  for code in $SAMPLE_CODES; do
+    if ! out=$(dc exec -T msp-glue mspctl tenant sync "$code" 2>&1); then
+      printf '%s\n' "$out" | tail -n 5
+      fail "the sample customer $code could not be set up in every tool" "read the error above; then the same command again"
+    fi
+  done
+  ok "PT ACME Retail Indonesia (acme) and PT Bank Contoh Tbk (bankx) are set up in every tool"
+
+  # The bank's router answers through its own edge collector, as a customer site would.
+  local edge=lab/.edge-bankx psk
+  if [ ! -f "$edge/zabbix_proxy.psk" ]; then
+    out=$(dc exec -T msp-glue mspctl proxy add bankx proxy-bankx-01 --address lab-bankx-proxy 2>&1) ||
+      fail "the edge collector of bankx could not be registered in Zabbix" "docker compose logs --tail 30 msp-glue"
+    psk=$(printf '%s\n' "$out" | sed -n 's/^echo \([0-9a-f]*\) > zabbix_proxy.psk.*/\1/p')
+    [ -n "$psk" ] || fail "Zabbix gave no key for the edge collector of bankx" "docker compose logs --tail 30 msp-glue"
+    mkdir -p "$edge"
+    cp edge-collector/compose.yaml "$edge/compose.yaml"
+    printf 'ZBX_HOSTNAME=proxy-bankx-01\nZBX_SERVER_HOST=zabbix-server\nZBX_TLSPSKIDENTITY=psk-proxy-bankx-01\nZABBIX_IMAGE_TAG=%s\n' \
+      "$ZABBIX_IMAGE_TAG" > "$edge/.env"
+    printf '%s\n' "$psk" > "$edge/zabbix_proxy.psk"
+    chmod 644 "$edge/zabbix_proxy.psk"
+  fi
+  if ! out=$(docker compose -p msp-lab-edge-bankx -f "$edge/compose.yaml" -f lab/compose.edge-lab.yaml up -d 2>&1); then
+    printf '%s\n' "$out" | tail -n 15
+    fail "the edge collector of bankx did not start" "read Docker's message above, then the same command again"
+  fi
+  ok "edge collector proxy-bankx-01 running at $LAB_IP_BANKX_PROXY"
+
+  for code in $SAMPLE_CODES; do
+    out=$(dc exec -T msp-glue mspctl device sync "$code" 2>&1) || {
+      printf '%s\n' "$out" | tail -n 5
+      fail "the devices of $code could not be put into Zabbix and GLPI" "docker compose exec msp-glue mspctl -v device sync $code shows the reason"
+    }
+    ok "$code: $(printf '%s\n' "$out" | tail -n 1)"
+  done
+  info "Open https://console.$MSP_DOMAIN/customers/acme and /customers/bankx; charts fill in over the first hour."
+  info "A practice outage: docker stop msp-lab-devices-lab-acme-srv01-agent-1 msp-lab-devices-lab-acme-srv01-1"
+  info "and its end:       docker start msp-lab-devices-lab-acme-srv01-1 msp-lab-devices-lab-acme-srv01-agent-1"
+  info "./scripts/install.sh samples off stops the monitoring of the sample devices."
+}
+
 proxy_serves() {  # proxy_serves FINGERPRINT NAME...: true when Caddy answers every NAME with that certificate
   local want=$1 t got waited=0
   shift
@@ -1258,7 +1385,7 @@ stage_certs() {  # certs <fullchain.pem> <privkey.pem>, or certs internal
 }
 
 # ======================================================================= driver
-usage() { sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,31p' "$0" | sed 's/^# \{0,1\}//'; }
 
 show_status() {
   step "Installation status ($KIT_DIR)"
@@ -1329,6 +1456,13 @@ main() {
       shift
       CURRENT_STAGE=certs
       stage_certs "$@"
+      CURRENT_STAGE=""
+      ;;
+    samples)
+      # A switch too: sample customers for practice, never part of an installation.
+      shift
+      CURRENT_STAGE=samples
+      stage_samples "$@"
       CURRENT_STAGE=""
       ;;
     *) usage; exit 1 ;;

@@ -1,11 +1,13 @@
-# Lab only: simulated customer devices on the platform network.
-#   docker compose -f lab/compose.devices.yaml up -d
-# Fixed addresses (run-lab.sh sets them from MSP_SUBNET: .201 to .203), so a restart of Docker cannot
-# hand a device's address to another container while Nautobot and Zabbix still point at it.
+# Simulated customer devices on the platform network, for the two sample customers.
+# The lab starts them (lab/run-lab.sh); on a platform server, ./scripts/install.sh samples does.
+# Fixed addresses (.201 to .203 of MSP_SUBNET), so a restart of Docker cannot hand a device's
+# address to another container while Nautobot and Zabbix still point at it. They start again with
+# Docker, so a reboot does not look like an outage.
 services:
   lab-acme-rtr01:
     image: msp/lab-fakenos:1.2.1
     build: ./fakenos
+    restart: unless-stopped
     environment:
       DEVICE_NAME: jkt01-rtr01
       # Deliberate drift: the standard has two NTP servers, this router only has one.
@@ -16,6 +18,7 @@ services:
   lab-acme-srv01:
     image: msp/lab-linux:1.0
     build: ./linux-server
+    restart: unless-stopped
     networks:
       msp: {ipv4_address: "${LAB_IP_ACME_SRV01:-172.30.0.202}"}
   # The lab server's Zabbix agent, in the server's own network (it answers on the server's address, port 10050),
@@ -25,13 +28,14 @@ services:
     network_mode: "service:lab-acme-srv01"
     depends_on: [lab-acme-srv01]
     # Agent 2 stops when one of its plugins starts slowly on a busy machine; it starts fine the next time.
-    restart: on-failure
+    restart: unless-stopped
     environment:
       ZBX_HOSTNAME: acme-jkt01-srv01
       ZBX_PASSIVESERVERS: "${MSP_SUBNET:-172.30.0.0/24}"
       ZBX_ACTIVE_ALLOW: "false"
   lab-bankx-rtr01:
     image: msp/lab-fakenos:1.2.1
+    restart: unless-stopped
     environment:
       DEVICE_NAME: ckr01-rtr01
       NTP_SERVERS: "10.255.0.1,10.255.0.2"

@@ -96,7 +96,8 @@ grafana/                     customer dashboard template
 scripts/                     prepare-server.sh (Docker, address pool, firewall), install.sh (the installer),
                              add-customer-secrets.sh, gen-env.sh, backup.sh, build-mediatype.py
 tenants/README.md            how customer secrets are stored (in secrets/, never in Git)
-lab/                         simulated devices, sample data, run-lab.sh and check.py
+lab/                         simulated devices, sample data, run-lab.sh and check.py (the sample
+                             customers of install.sh samples come from here too)
 ```
 
 ## Try it in a lab first
@@ -153,7 +154,7 @@ Each version of the kit is published as a zip in the `dist` folder of this repos
 SHA-256 checksum in `dist/SHA256SUMS`. On the server (`wget -O` works the same as `curl -o`):
 
 ```bash
-curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.2.0.zip
+curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.2.1.zip
 sha256sum /tmp/ioh-msp-stack.zip      # must equal the line for this file in dist/SHA256SUMS
 command -v unzip >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y unzip)
 sudo mkdir -p /opt/ioh-msp-stack && sudo chown "$(id -un):" /opt/ioh-msp-stack
@@ -193,6 +194,7 @@ Then, from `/opt/ioh-msp-stack` and without sudo:
 ./scripts/install.sh sso-tools                     # staff sign in to Nautobot, Zabbix, Semaphore, Forgejo, Grafana with Keycloak
 ./scripts/install.sh chat telegram                 # chat alerts (or: chat teams, chat email, chat test, chat off)
 ./scripts/install.sh grafana                       # phase 3: customer dashboards
+./scripts/install.sh samples                       # optional: two made-up customers to practise on
 ```
 
 `sso` starts Keycloak, creates the realm `msp` with the three roles and the console's client, and
@@ -274,8 +276,44 @@ times in the platform's time zone instead of UTC, and the business-hours calenda
 now really means 08:00 to 17:00 there; with `sso-tools`, the tools' log-in pages get a Keycloak
 button. The console's audit trail and sessions carry over.
 
+From 1.2.0 to 1.2.1, unpack and that is all: 1.2.1 adds `./scripts/install.sh samples` (see
+"Sample customers for practice"), and its images are the same as 1.2.0's.
+
 The guide's build tab lists the same work as manual steps, for anyone who wants to see or repeat a
 single step by hand.
+
+## Sample customers for practice
+
+`./scripts/install.sh samples` puts the lab's two made-up customers on a platform server, so the
+console has something to show before real customers arrive: PT ACME Retail Indonesia (`acme`) with a
+router, a server and a planned switch, and PT Bank Contoh Tbk (`bankx`) with a router behind its own
+edge collector. Their devices are small containers on the platform network, at addresses .201 to .204
+of `MSP_SUBNET`: two simulated Cisco routers that answer SSH (one of them a little off the
+configuration standard, so it gets a drift ticket) and a Linux server with Zabbix agent 2. The first run
+builds two images, which needs pypi.org and dl-cdn.alpinelinux.org, and takes a few minutes.
+
+```bash
+./scripts/install.sh samples        # the two customers, their devices and the bank's edge collector
+./scripts/install.sh samples off    # their devices Offline: no monitoring, alerts or tickets; history kept
+```
+
+A practice outage takes the sample server down and brings it back. Within about five minutes the
+console shows the problem, GLPI has its ticket and, with chat alerts on, the NOC chat has the message:
+
+```bash
+docker stop msp-lab-devices-lab-acme-srv01-agent-1 msp-lab-devices-lab-acme-srv01-1
+docker start msp-lab-devices-lab-acme-srv01-1 msp-lab-devices-lab-acme-srv01-agent-1
+```
+
+The simulated routers answer ping and SSH only, so Zabbix shows "No SNMP data collection" on both;
+that warning is expected. The samples bring their own configuration standard (the config context
+`sample-customers-standards`, for the two sample customers only), so the platform's `msp-standards`
+stays as you set it. They count as customers everywhere, the monthly service report included. To
+remove them for good, delete their devices, circuits, IP addresses, sites and the two tenants in
+Nautobot, then run `docker compose -p msp-lab-devices -f lab/compose.devices.yaml down` and
+`docker compose -p msp-lab-edge-bankx -f lab/.edge-bankx/compose.yaml down`. The tools keep their
+records of the two customers (disabled Zabbix hosts, the GLPI entities, the Semaphore projects and
+Grafana organisations), which an administrator can delete in each tool.
 
 ## Everyday commands
 

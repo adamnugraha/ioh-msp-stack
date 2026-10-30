@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
-"""Lab only: create two sample customers and their devices in Nautobot.
+"""Create two sample customers and their devices in Nautobot.
 
 Nautobot then sends webhooks to msp-glue, which provisions everything else.
-Run from the kit folder after "mspctl bootstrap platform":  python3 lab/seed.py
+In the lab, from the kit folder after "mspctl bootstrap platform":  python3 lab/seed.py
+On a platform server, "./scripts/install.sh samples" runs it inside the platform network, with
+NAUTOBOT_API, MSP_SUBNET and the devices' addresses (LAB_IP_ACME_RTR01 and so on) set.
+With --offline it only sets the simulated devices to Offline, so Zabbix stops watching them.
 """
 
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import requests
 
 ROOT = Path(__file__).resolve().parent.parent
 env = dict(line.strip().split("=", 1) for line in open(ROOT / ".env") if "=" in line and not line.startswith("#"))
-API = "http://localhost:8081/api/"
+API = os.environ.get("NAUTOBOT_API", "http://localhost:8081/api/")
+OFFLINE = "--offline" in sys.argv[1:]
 S = requests.Session()
 S.headers.update({"Authorization": f"Token {env['NAUTOBOT_SUPERUSER_API_TOKEN']}", "Accept": "application/json",
                   "Content-Type": "application/json"})
@@ -36,12 +42,40 @@ def ensure(path, lookup, payload):
 
 
 def ip_of(container):
+    # msp-lab-devices-lab-acme-rtr01-1 is given as LAB_IP_ACME_RTR01 when Docker cannot be asked (inside a container)
+    short = container.removeprefix("msp-lab-devices-lab-").removesuffix("-1")
+    given = os.environ.get("LAB_IP_" + short.upper().replace("-", "_"))
+    if given:
+        return given
     return subprocess.check_output(
         ["docker", "inspect", "-f", "{{.NetworkSettings.Networks.msp.IPAddress}}", container], text=True).strip()
 
 
+# Sample customers and their simulated devices: name, customer, site, role, platform, type, status, container, serial
+TENANT_NAMES = {"acme": "PT ACME Retail Indonesia", "bankx": "PT Bank Contoh Tbk"}
+SIMULATED = {"jkt01-rtr01": "acme", "jkt01-srv01": "acme", "ckr01-rtr01": "bankx"}
+
+if OFFLINE:
+    # Offline in Nautobot: msp-glue keeps the Zabbix hosts, with their history, and stops monitoring them.
+    status = {s["name"]: s["id"] for s in get("extras/statuses/", limit=100)}
+    found = 0
+    for code, name in TENANT_NAMES.items():
+        tenant = get("tenancy/tenants/", name=name)
+        if not tenant:
+            continue
+        for dev in get("dcim/devices/", tenant=tenant[0]["id"], limit=100):
+            if SIMULATED.get(dev["name"]) != code:
+                continue
+            found += 1
+            if (dev.get("status") or {}).get("id") != status["Offline"]:
+                S.patch(API + f"dcim/devices/{dev['id']}/", data=json.dumps({"status": status["Offline"]})).raise_for_status()
+            print(f"device {dev['name']}: Offline")
+    if not found:
+        print("No sample devices here: nothing to switch off.")
+    sys.exit(0)
+
 # The platform network's subnet, for example 172.30.0.0/24 (see lab/run-lab.sh).
-SUBNET = subprocess.check_output(
+SUBNET = os.environ.get("MSP_SUBNET") or subprocess.check_output(
     ["docker", "network", "inspect", "msp", "-f", "{{(index .IPAM.Config 0).Subnet}}"], text=True).strip()
 MASK = SUBNET.split("/")[1]
 
@@ -69,14 +103,6 @@ makers = {m["name"]: m["id"] for m in get("dcim/manufacturers/", limit=100)}
 group = get("tenancy/tenant-groups/", name="Managed Services Customers")[0]
 namespace = get("ipam/namespaces/", name="Global")[0]
 
-# Platform standard used by the Golden Config templates (all customers).
-ensure("extras/config-contexts/", {"name": "msp-standards"}, {
-    "name": "msp-standards", "weight": 1000, "is_active": True,
-    "description": "Platform-wide configuration standards for managed devices",
-    "data": {"msp_standards": {"ntp_servers": ["10.255.0.1", "10.255.0.2"], "logging_hosts": ["10.255.0.10"],
-                               "snmp_location": "IOH managed", "snmp_contact": "noc@indosatooredoo.com"}},
-})
-
 jakarta = ensure("dcim/locations/", {"name": "Jakarta"},
                  {"name": "Jakarta", "location_type": loc_types["Region"], "status": status["Active"]})
 westjava = ensure("dcim/locations/", {"name": "West Java"},
@@ -86,14 +112,14 @@ c9200 = ensure("dcim/device-types/", {"model": "C9200L-24T-4G"}, {"model": "C920
 linuxvm = ensure("dcim/device-types/", {"model": "Linux VM"}, {"model": "Linux VM", "manufacturer": makers["Generic"]})
 ensure("ipam/prefixes/", {"prefix": SUBNET}, {"prefix": SUBNET, "namespace": namespace["id"],
                                               "status": status["Active"], "type": "network",
-                                              "description": "Lab platform network"})
+                                              "description": "Platform network, where the simulated devices sit"})
 
 # ------------------------------------------------------------------------ tenants
 tenants = {
-    "acme": {"name": "PT ACME Retail Indonesia", "custom_fields": {
+    "acme": {"name": TENANT_NAMES["acme"], "custom_fields": {
         "msp_code": "acme", "msp_service_tier": "silver", "msp_customer_id": "IOH-100234",
         "msp_snmp_version": "2", "msp_contact_email": "it@acme.example"}},
-    "bankx": {"name": "PT Bank Contoh Tbk", "custom_fields": {
+    "bankx": {"name": TENANT_NAMES["bankx"], "custom_fields": {
         "msp_code": "bankx", "msp_service_tier": "gold", "msp_customer_id": "IOH-100871", "msp_regulated": True,
         "msp_snmp_version": "3", "msp_proxy_group": "pg-bankx", "msp_contact_email": "noc@bankcontoh.example"}},
 }
@@ -103,6 +129,16 @@ for code, spec in tenants.items():
                {"name": spec["name"], "tenant_group": group["id"], "custom_fields": spec["custom_fields"]})
     tenant_ids[code] = t["id"]
     print(f"tenant {code}: {t['id']}")
+
+# The configuration standard the Golden Config templates check, for the two sample customers only, so the
+# standard of a real platform (the config context "msp-standards") stays as IOH sets it.
+ensure("extras/config-contexts/", {"name": "sample-customers-standards"}, {
+    "name": "sample-customers-standards", "weight": 2000, "is_active": True,
+    "description": "Configuration standards for the two sample customers (lab/seed.py)",
+    "tenants": list(tenant_ids.values()),
+    "data": {"msp_standards": {"ntp_servers": ["10.255.0.1", "10.255.0.2"], "logging_hosts": ["10.255.0.10"],
+                               "snmp_location": "IOH managed", "snmp_contact": "noc@indosatooredoo.com"}},
+})
 
 sites = {
     "acme-hq": ensure("dcim/locations/", {"name": "ACME HQ Jakarta"}, {
@@ -129,6 +165,10 @@ for name, code, site, role, platform, dtype, st, container, serial in devices:
         "name": name, "tenant": tenant_ids[code], "location": sites[site]["id"], "role": roles[role],
         "platform": platforms[platform], "device_type": dtype["id"], "status": status[st], "serial": serial,
     })
+    # A device switched Offline (samples off) is Active again here.
+    if (dev.get("status") or {}).get("id") != status[st]:
+        S.patch(API + f"dcim/devices/{dev['id']}/", data=json.dumps({"status": status[st]})).raise_for_status()
+        print(f"device {name}: {st} again")
     if not container:
         print(f"device {name}: {st}, no address")
         continue
