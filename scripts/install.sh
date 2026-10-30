@@ -373,7 +373,7 @@ for line in sys.stdin:
 
 stage_settings() {
   step "Settings (.env)"
-  local domain="" nets="" subnet="" tz="" zurl="" gurl="" email=""
+  local domain="" nets="" subnet="" tz="" zurl="" gurl="" email="" web="" coll=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --domain) domain=${2:-}; shift 2 ;;
@@ -383,17 +383,22 @@ stage_settings() {
       --zabbix-url) zurl=${2:-}; shift 2 ;;
       --glpi-url) gurl=${2:-}; shift 2 ;;
       --email) email=${2:-}; shift 2 ;;
-      *) fail "unknown option '$1' for settings" "use --domain --admin-networks --subnet --tz --email (and optionally --zabbix-url --glpi-url)" ;;
+      --web-listen) web=${2:-}; shift 2 ;;
+      --collectors-listen) coll=${2:-}; shift 2 ;;
+      *) fail "unknown option '$1' for settings" "use --domain --admin-networks --subnet --tz --email (and optionally --zabbix-url --glpi-url --web-listen --collectors-listen)" ;;
     esac
   done
   if [ ! -f .env ]; then
     ./scripts/gen-env.sh
   fi
   chmod 600 .env
-  python3 - "$domain" "$nets" "$subnet" "$tz" "$email" <<'PY' || fail "a setting is not valid (see above)" "correct it and run the settings command again"
+  python3 - "$domain" "$nets" "$subnet" "$tz" "$email" "$web" "$coll" <<'PY' || fail "a setting is not valid (see above)" "correct it and run the settings command again"
 import ipaddress, os, re, sys
-domain, nets, subnet, tz, email = sys.argv[1:6]
+domain, nets, subnet, tz, email, web, coll = sys.argv[1:8]
 errors = []
+for flag, value in (("--web-listen", web), ("--collectors-listen", coll)):
+    if value and value not in ("0.0.0.0", "127.0.0.1"):
+        errors.append(f"{flag} '{value}' must be 0.0.0.0 (every network) or 127.0.0.1 (this server only)")
 if domain and not re.fullmatch(r"(?=.{1,200}$)([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}", domain):
     errors.append(f"--domain '{domain}' is not a DNS domain in lowercase, for example msp.ioh.internal")
 for n in nets.split():
@@ -434,12 +439,18 @@ PY
   [ -n "$subnet" ] && set_env MSP_SUBNET "$subnet"
   [ -n "$tz" ] && set_env TZ "$tz"
   [ -n "$email" ] && set_env NAUTOBOT_SUPERUSER_EMAIL "$email"
+  [ -n "$web" ] && set_env WEB_LISTEN_ADDRESS "$web"
+  [ -n "$coll" ] && set_env COLLECTOR_LISTEN_ADDRESS "$coll"
   load_env
   ok "domain           $MSP_DOMAIN"
   ok "admin networks   $ADMIN_NETWORKS"
   ok "platform network ${MSP_SUBNET:-172.30.0.0/24}"
   ok "time zone        $TZ"
   ok "Zabbix and GLPI  $ZABBIX_PUBLIC_URL  $GLPI_PUBLIC_URL"
+  ok "listens on       web ${WEB_LISTEN_ADDRESS:-0.0.0.0}, collectors ${COLLECTOR_LISTEN_ADDRESS:-0.0.0.0}"
+  if [ -n "$web$coll" ] && [ "$(docker ps -q --filter label=com.docker.compose.project="${COMPOSE_PROJECT_NAME:-ioh-msp-stack}" 2>/dev/null | head -n 1)" ]; then
+    info "The platform runs already: docker compose up -d proxy zabbix-server applies the new listen addresses."
+  fi
   if [ "$MSP_DOMAIN" = msp.example.internal ]; then
     fail "the domain is still the example value msp.example.internal" "./scripts/install.sh settings --domain <your domain, for example msp.ioh.internal>"
   fi
@@ -724,7 +735,7 @@ stage_proxy() {
   if dc cp proxy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt >/dev/null 2>&1; then
     ok "Caddy's root certificate saved as $KIT_DIR/caddy-root.crt: install it on NOC PCs, or use IOH certificates (see the guide)"
   fi
-  info "Each name must resolve to this server in DNS (or in the hosts file of your PC while testing)."
+  info "Each name must point at this server in DNS (or the hosts file of your PC while testing), or be a route of a Cloudflare Tunnel (environments/cloudflare-tunnel.md)."
 }
 
 stage_grafana() {

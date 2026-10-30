@@ -94,10 +94,15 @@ golden-config/               starter content of the shared Golden Config Git rep
 semaphore/playbooks/         starter content of the shared playbook Git repository
 grafana/                     customer dashboard template
 scripts/                     prepare-server.sh (Docker, address pool, firewall), install.sh (the installer),
+                             autoinstall.sh (everything at once, unattended) and its settings reader,
                              add-customer-secrets.sh, gen-env.sh, backup.sh, build-mediatype.py
 tenants/README.md            how customer secrets are stored (in secrets/, never in Git)
 lab/                         simulated devices, sample data, run-lab.sh and check.py (the sample
                              customers of install.sh samples come from here too)
+environments/                where the server runs: Google Cloud and AWS (a script creates the server),
+                             a VPS, IOH's private cloud; the Cloudflare Tunnel as the way in outside IOH;
+                             the automatic install's settings file and bootstrap.sh
+VERSION                      the kit's version
 ```
 
 ## Try it in a lab first
@@ -150,11 +155,18 @@ and when something is wrong stops with the reason, the fix and the command that 
 the fix. The interactive installation guide "IOH MSP Platform Install" walks through every command,
 from an empty server to the first customer, with your own values filled in.
 
+This section describes a server in IOH's private cloud. For a trial on Google Cloud, AWS or a VPS
+from any provider, follow [environments/](environments/README.md) instead: a script there creates the
+server in the cloud, and the steps use the same installer with a few other values (no web proxy, the
+cloud's firewall, and a Cloudflare Tunnel as the way in). There, one settings file and one command can
+also do everything at once (`scripts/autoinstall.sh`, "Automatic install"), which makes a rebuild two
+commands.
+
 Each version of the kit is published as a zip in the `dist` folder of this repository, with its
 SHA-256 checksum in `dist/SHA256SUMS`. On the server (`wget -O` works the same as `curl -o`):
 
 ```bash
-curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.2.1.zip
+curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.4.0.zip
 sha256sum /tmp/ioh-msp-stack.zip      # must equal the line for this file in dist/SHA256SUMS
 command -v unzip >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y unzip)
 sudo mkdir -p /opt/ioh-msp-stack && sudo chown "$(id -un):" /opt/ioh-msp-stack
@@ -196,6 +208,13 @@ Then, from `/opt/ioh-msp-stack` and without sudo:
 ./scripts/install.sh grafana                       # phase 3: customer dashboards
 ./scripts/install.sh samples                       # optional: two made-up customers to practise on
 ```
+
+Two settings decide where the published ports listen: `--web-listen` for Caddy's 80 and 443 and
+`--collectors-listen` for Zabbix's 10051 (collectors at customer sites). Both default to `0.0.0.0`,
+every network, as IOH's network needs. `127.0.0.1` keeps a port on the server itself: for the web
+ports when a Cloudflare Tunnel on the server is the way in, and for 10051 when no collector connects
+from outside. Docker's published ports bypass the server's firewall (ufw), so these settings are what
+closes them. On a running platform, `docker compose up -d proxy zabbix-server` applies a change.
 
 `sso` starts Keycloak, creates the realm `msp` with the three roles and the console's client, and
 with `--admin-email` the first administrator; it prints a one-time password that Keycloak replaces
@@ -278,6 +297,14 @@ button. The console's audit trail and sessions carry over.
 
 From 1.2.0 to 1.2.1, unpack and that is all: 1.2.1 adds `./scripts/install.sh samples` (see
 "Sample customers for practice"), and its images are the same as 1.2.0's.
+
+From 1.2.x to 1.3.0, unpack and that is all as well: 1.3.0 adds the [environments/](environments/README.md)
+folder (Google Cloud, AWS, a VPS) and the two listen settings above, which default to what the
+platform did before. Its images are still 1.2.0's.
+
+From 1.3.0 to 1.4.0, unpack and that is all: 1.4.0 adds the automatic install
+(`scripts/autoinstall.sh`, `environments/bootstrap.sh` and `--autoinstall` in the create scripts) and
+changes nothing on a platform that is already installed.
 
 The guide's build tab lists the same work as manual steps, for anyone who wants to see or repeat a
 single step by hand.

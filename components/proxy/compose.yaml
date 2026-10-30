@@ -13,8 +13,9 @@ services:
       # Networks allowed to reach the engineering tools (space-separated CIDR list).
       ADMIN_NETWORKS: ${ADMIN_NETWORKS:-10.0.0.0/8 172.16.0.0/12 192.168.0.0/16}
     ports:
-      - "80:80"
-      - "443:443"
+      # WEB_LISTEN_ADDRESS=127.0.0.1 in .env: only this server reaches them (a Cloudflare Tunnel running here).
+      - "${WEB_LISTEN_ADDRESS:-0.0.0.0}:80:80"
+      - "${WEB_LISTEN_ADDRESS:-0.0.0.0}:443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       # Optional IOH certificates (fullchain.pem, privkey.pem), put there by ./scripts/install.sh certs.
