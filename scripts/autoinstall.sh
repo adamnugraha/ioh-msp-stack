@@ -477,7 +477,10 @@ cmd_tunnel() {
   else
     IFS= read -r token || true
   fi
-  token=${token##* }
+  # The last word: someone may paste the whole "sudo cloudflared service install <token>" line, or a space after.
+  local words=()
+  read -r -a words <<< "$token" || true
+  if [ ${#words[@]} -gt 0 ]; then token=${words[${#words[@]}-1]}; else token=""; fi
   [[ "$token" =~ ^[A-Za-z0-9+/=_-]{50,}$ ]] || fail "that is not a tunnel token" \
     "Cloudflare dashboard: Networking, Tunnels, your tunnel; copy the long string after \"cloudflared service install\""
   step "Cloudflare Tunnel"
