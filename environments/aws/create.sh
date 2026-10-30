@@ -1,0 +1,241 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Create the platform's server on AWS: one Ubuntu 24.04 instance in the Region's default network,
+# whose security group lets in SSH from your own address and nothing else. Run it in AWS CloudShell
+# (the >_ button in the AWS console), where the AWS CLI is ready, or on a PC with AWS CLI v2.
+#
+#   ./environments/aws/create.sh --ssh-from <your address>/32
+#
+# Options:
+#   --ssh-from "CIDR ..."  where your SSH client connects from: open https://checkip.amazonaws.com
+#                          on your PC (or on the server that runs your SSH client, such as Termix)
+#   --region REGION        default ap-southeast-3 (Jakarta; an opt-in Region, see the README)
+#   --name NAME            the instance, its key pair and its security group (default msp-test-01)
+#   --type TYPE            default m7i-flex.xlarge (4 vCPU, 16 GB); m7i-flex.large (2 vCPU, 8 GB)
+#                          is one of the sizes the free plan allows
+#   --disk GB              default 100, at least 40
+#   --public-key FILE      log in with your own SSH key; without it the script makes a key pair
+#                          and saves its private key as NAME.pem here
+#   --collectors-from "CIDR ..."  open port 10051 to collectors at these addresses
+#   --dry-run              print the AWS CLI commands without running them
+#
+# Running it again is safe: what exists is kept; new --ssh-from addresses are added.
+# ./environments/aws/delete.sh removes everything this script created.
+# =============================================================================
+set -euo pipefail
+export AWS_PAGER=""
+
+SSH_FROM="" REGION=ap-southeast-3 NAME=msp-test-01 TYPE=m7i-flex.xlarge DISK=100 PUBKEY="" COLLECTORS="" DRY=0
+AMI_PARAM=/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+
+if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; N=$'\033[0m'; else B=; G=; Y=; R=; N=; fi
+step() { printf '\n%s== %s%s\n' "$B" "$*" "$N"; }
+ok()   { printf '  %sOK%s     %s\n' "$G" "$N" "$*"; }
+info() { printf '         %s\n' "$*"; }
+warn() { printf '  %sWARN%s   %s\n' "$Y" "$N" "$1"; [ -n "${2:-}" ] && printf '         Fix: %s\n' "$2"; return 0; }
+fail() { printf '\n  %sSTOPPED%s %s\n' "$R" "$N" "$1"; [ -n "${2:-}" ] && printf '  Fix:    %s\n' "$2"; exit 1; }
+usage() { sed -n '3,23p' "$0" | sed 's/^# \{0,1\}//'; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --ssh-from) SSH_FROM=${2:-}; shift 2 ;;
+    --region) REGION=${2:-}; shift 2 ;;
+    --name) NAME=${2:-}; shift 2 ;;
+    --type) TYPE=${2:-}; shift 2 ;;
+    --disk) DISK=${2:-}; shift 2 ;;
+    --public-key) PUBKEY=${2:-}; shift 2 ;;
+    --collectors-from) COLLECTORS=${2:-}; shift 2 ;;
+    --dry-run) DRY=1; shift ;;
+    -h | --help) usage; exit 0 ;;
+    *) fail "unknown option '$1'" "./environments/aws/create.sh --help lists the options" ;;
+  esac
+done
+
+# ------------------------------------------------------------------ check the options
+[ -n "$SSH_FROM" ] || fail "--ssh-from is missing: without it nobody could log in" \
+  "open https://checkip.amazonaws.com on your PC and add --ssh-from <that address>/32"
+python3 - "$SSH_FROM" "$REGION" "$NAME" "$TYPE" "$DISK" "$COLLECTORS" <<'PY' || fail "an option is not valid (see above)" "correct it and run the command again"
+import ipaddress, re, sys
+ssh_from, region, name, itype, disk, collectors = sys.argv[1:7]
+errors = []
+for flag, value in (("--ssh-from", ssh_from), ("--collectors-from", collectors)):
+    for item in value.split():
+        try:
+            net = ipaddress.ip_network(item, strict=False)
+            if net.prefixlen == 0:
+                errors.append(f"{flag}: {item} would let the whole Internet in; give your own address with /32")
+        except ValueError:
+            errors.append(f"{flag}: '{item}' is not an address range such as 203.0.113.7/32")
+if not re.fullmatch(r"[a-z]{2}-[a-z]+-[0-9]", region):
+    errors.append(f"--region '{region}' is not a Region such as ap-southeast-3")
+if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,62}", name):
+    errors.append(f"--name '{name}': letters, digits and dashes")
+if not re.fullmatch(r"[a-z0-9-]+\.[a-z0-9]+", itype):
+    errors.append(f"--type '{itype}' is not an instance type such as m7i-flex.xlarge")
+if not disk.isdigit() or int(disk) < 40:
+    errors.append(f"--disk '{disk}': a number of GB, 40 or more")
+for e in errors:
+    print("  FAIL   " + e)
+sys.exit(1 if errors else 0)
+PY
+if [ -n "$PUBKEY" ]; then
+  [ -r "$PUBKEY" ] && grep -qE '^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp[0-9]+) ' "$PUBKEY" ||
+    fail "$PUBKEY is not an SSH public key" "give the .pub file, the one that starts with ssh-ed25519 or ssh-rsa"
+fi
+
+aws_() {  # aws_ ARGS...: the AWS CLI in the chosen Region, or only show the command in a dry run
+  if [ "$DRY" = 1 ]; then printf '  would run: aws'; printf ' %q' "$@" --region "$REGION"; printf '\n'; return 0; fi
+  aws "$@" --region "$REGION"
+}
+ask() {  # ask ARGS...: a read-only query (empty in a dry run); prints the answer, "None" becomes empty
+  [ "$DRY" = 1 ] && return 0
+  local out; out=$(aws "$@" --region "$REGION" --output text 2>/dev/null || true)
+  [ "$out" = None ] && out=""
+  printf '%s' "$out"
+}
+
+[ "$DRY" = 1 ] && printf '%sDry run: nothing is created; these are the AWS CLI commands a real run would use.%s\n' "$B" "$N"
+
+# ------------------------------------------------------------------ account and Region
+step "Account and Region $REGION"
+[ "$DRY" = 1 ] && info "(the account, the Region and the Ubuntu image are only read in a real run)"
+if [ "$DRY" = 0 ]; then
+  command -v aws >/dev/null || fail "the AWS CLI is not installed here" "use AWS CloudShell (the >_ button in the AWS console), or install AWS CLI v2"
+  account=$(aws sts get-caller-identity --query Account --output text 2>/dev/null) ||
+    fail "the AWS CLI has no working credentials here" "in CloudShell they are there already; on a PC run aws configure or aws sso login"
+  ok "account $account"
+  opt=$(aws account get-region-opt-status --region-name "$REGION" --query RegionOptStatus --output text 2>/dev/null || true)
+  case "$opt" in
+    ENABLED | ENABLED_BY_DEFAULT) ok "Region $REGION is enabled" ;;
+    ENABLING) fail "Region $REGION is still being enabled" "wait until it is done (minutes, sometimes hours), then run the command again" ;;
+    DISABLED | DISABLING) fail "Region $REGION is not enabled for this account (Jakarta is an opt-in Region)" \
+      "aws account enable-region --region-name $REGION, or the console: Account, AWS Regions; wait until it shows Enabled, then run the command again" ;;
+    *) warn "could not read whether $REGION is enabled; going on" "if the next step says AuthFailure or OptInRequired, enable the Region first (see the README)" ;;
+  esac
+fi
+AMI=$(ask ssm get-parameter --name "$AMI_PARAM" --query Parameter.Value)
+if [ "$DRY" = 0 ]; then
+  [ -n "$AMI" ] || fail "Ubuntu 24.04 is not listed in $REGION" "the Region is not enabled yet, or choose another --region"
+  ok "Ubuntu 24.04 image $AMI (Canonical's latest)"
+fi
+
+# ------------------------------------------------------------------ network
+step "Network"
+read -r VPC VPC_CIDR <<<"$(ask ec2 describe-vpcs --filters Name=is-default,Values=true --query 'Vpcs[0].[VpcId,CidrBlock]')" || true
+if [ "$DRY" = 0 ]; then
+  [ -n "${VPC:-}" ] || fail "$REGION has no default network (VPC) in this account" "aws ec2 create-default-vpc --region $REGION, then run the command again"
+  ok "default network $VPC ($VPC_CIDR)"
+fi
+# Docker's address pool on the server must stay clear of the network: AWS's default 172.31.0.0/16
+# is the kit's usual pool, so pick another.
+POOL=$(python3 - "${VPC_CIDR:-172.31.0.0/16}" <<'PY'
+import ipaddress, sys
+vpc = ipaddress.ip_network(sys.argv[1])
+for c in ("172.29.0.0/16", "172.28.0.0/16", "172.27.0.0/16", "10.250.0.0/16"):
+    if not ipaddress.ip_network(c).overlaps(vpc):
+        print(c)
+        break
+PY
+)
+clear_of=${VPC_CIDR:-172.31.0.0/16}
+info "Docker's address pool on this server: $POOL (clear of the network's $clear_of)"
+
+# ------------------------------------------------------------------ key pair
+step "Key pair $NAME"
+KEYFILE=""
+have_key=$(ask ec2 describe-key-pairs --key-names "$NAME" --query 'KeyPairs[0].KeyName')
+if [ -n "$have_key" ]; then
+  ok "key pair $NAME exists in AWS"
+  if [ -z "$PUBKEY" ]; then
+    KEYFILE="$NAME.pem"
+    [ -f "$KEYFILE" ] || warn "the private key $KEYFILE is not in this folder" \
+      "use the copy you saved when it was made; if it is lost, delete the key pair (aws ec2 delete-key-pair --key-name $NAME) and the instance, then run this again"
+  fi
+elif [ -n "$PUBKEY" ]; then
+  aws_ ec2 import-key-pair --key-name "$NAME" --public-key-material "fileb://$PUBKEY" --query KeyName --output text
+  ok "your key $PUBKEY imported as $NAME"
+else
+  KEYFILE="$NAME.pem"
+  [ -e "$KEYFILE" ] && fail "$KEYFILE exists here already, from another key pair" "move it away first, then run the command again"
+  if [ "$DRY" = 1 ]; then
+    aws_ ec2 create-key-pair --key-name "$NAME" --key-type ed25519 --query KeyMaterial --output text
+  else
+    (umask 077; aws ec2 create-key-pair --key-name "$NAME" --key-type ed25519 --query KeyMaterial --output text --region "$REGION" > "$KEYFILE")
+    chmod 400 "$KEYFILE"
+  fi
+  ok "key pair $NAME made; its private key is $PWD/$KEYFILE"
+  info "Download it to your PC now (CloudShell: Actions, Download file); AWS never shows it again."
+fi
+
+# ------------------------------------------------------------------ security group
+step "Security group $NAME-sg (only what is listed here gets in)"
+SG=$(ask ec2 describe-security-groups --filters "Name=group-name,Values=$NAME-sg" "Name=vpc-id,Values=${VPC:-vpc}" --query 'SecurityGroups[0].GroupId')
+if [ -n "$SG" ]; then
+  ok "security group $SG exists"
+else
+  if [ "$DRY" = 1 ]; then
+    aws_ ec2 create-security-group --group-name "$NAME-sg" --description "IOH MSP platform $NAME: SSH from the admin's address only" --vpc-id "${VPC:-<default VPC>}"
+    SG="<security group>"
+  else
+    SG=$(aws ec2 create-security-group --group-name "$NAME-sg" --description "IOH MSP platform $NAME: SSH from the admin's address only" \
+      --vpc-id "$VPC" --query GroupId --output text --region "$REGION")
+  fi
+  ok "security group $SG created"
+fi
+allow() {  # allow PORT CIDR WHAT: one inbound rule, skipped when it is there already
+  local out
+  if [ "$DRY" = 1 ]; then aws_ ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port "$1" --cidr "$2"; return 0; fi
+  if out=$(aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol tcp --port "$1" --cidr "$2" --region "$REGION" 2>&1); then
+    ok "port $1 from $2 ($3)"
+  elif printf '%s' "$out" | grep -q InvalidPermission.Duplicate; then
+    ok "port $1 from $2 ($3), there already"
+  else
+    printf '%s\n' "$out"
+    fail "the rule for port $1 from $2 was refused" "read AWS's reason above"
+  fi
+}
+for c in $SSH_FROM; do allow 22 "$c" "SSH"; done
+for c in $COLLECTORS; do allow 10051 "$c" "collector at a customer site"; done
+info "Nothing else gets in: browsers come through the Cloudflare Tunnel, which connects out."
+info "An address you no longer use stays allowed until you remove it (EC2, Security groups, $NAME-sg)."
+
+# ------------------------------------------------------------------ instance
+step "Instance $NAME"
+ID=$(ask ec2 describe-instances --filters "Name=tag:Name,Values=$NAME" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+  --query 'Reservations[0].Instances[0].InstanceId')
+if [ -n "$ID" ]; then
+  ok "instance $ID exists ($(ask ec2 describe-instances --instance-ids "$ID" --query 'Reservations[0].Instances[0].State.Name'))"
+else
+  args=(ec2 run-instances --image-id "${AMI:-<Ubuntu 24.04 image>}" --instance-type "$TYPE" --key-name "$NAME"
+        --security-group-ids "$SG"
+        --block-device-mappings "DeviceName=/dev/sda1,Ebs={VolumeSize=$DISK,VolumeType=gp3,DeleteOnTermination=true}"
+        --metadata-options "HttpTokens=required,HttpEndpoint=enabled"
+        --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$NAME}]" "ResourceType=volume,Tags=[{Key=Name,Value=$NAME}]"
+        --query 'Instances[0].InstanceId' --output text)
+  if [ "$DRY" = 1 ]; then
+    aws_ "${args[@]}"
+  else
+    if ! ID=$(aws "${args[@]}" --region "$REGION" 2>&1); then
+      printf '%s\n' "$ID"
+      fail "the instance was not started (AWS's reason is above)" \
+        "on the free plan, use --type m7i-flex.large, or upgrade to the paid plan (the credits stay); another type if $TYPE is not offered in $REGION"
+    fi
+    ok "instance $ID started: $TYPE, Ubuntu 24.04, ${DISK} GB"
+    info "waiting until it runs..."
+    aws ec2 wait instance-running --instance-ids "$ID" --region "$REGION"
+  fi
+fi
+IP=$(ask ec2 describe-instances --instance-ids "${ID:-i-none}" --query 'Reservations[0].Instances[0].PublicIpAddress')
+if [ "$DRY" = 1 ]; then IP="<its public address>"; ID="<instance ID>"; fi
+
+# ------------------------------------------------------------------ next
+step "Next"
+if [ -n "$KEYFILE" ]; then info "Connect from your PC:  ssh -i $KEYFILE ubuntu@$IP"
+else info "Connect from your PC:  ssh ubuntu@$IP"; fi
+info "Then follow environments/aws/README.md from step 5, or the install guide with"
+info "Where the server runs: AWS. On the server, prepare-server.sh takes --no-firewall --pool $POOL:"
+info "the security group protects the server, and the pool stays clear of AWS's network."
+info "The public address changes after a stop and start; this shows the current one:"
+info "  aws ec2 describe-instances --instance-ids $ID --region $REGION --query 'Reservations[0].Instances[0].PublicIpAddress' --output text"
+info "Stop it when you are not testing (the disk still costs a little):"
+info "  aws ec2 stop-instances --instance-ids $ID --region $REGION"

@@ -24,7 +24,8 @@ services:
       TZ: ${TZ}
     ports:
       # Active proxies at customer sites connect to this port (protect it with a firewall).
-      - "10051:10051"
+      # COLLECTOR_LISTEN_ADDRESS=127.0.0.1 in .env closes it when no collector connects from outside.
+      - "${COLLECTOR_LISTEN_ADDRESS:-0.0.0.0}:10051:10051"
     volumes:
       - zabbix_alertscripts:/usr/lib/zabbix/alertscripts
       - zabbix_externalscripts:/usr/lib/zabbix/externalscripts
