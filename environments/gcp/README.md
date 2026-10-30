@@ -103,7 +103,8 @@ Every container starts again with the machine, and the tunnel reconnects by itse
 - **E-mail.** Google Cloud blocks outgoing port 25. GLPI's notifications and `./scripts/install.sh chat
   email` need a mail service on port 587 or 465.
 - **A collector at a customer site** (for example on your own VPS) connects to port 10051. Run
-  `create.sh` again with `--collectors-from "<collector address>/32"`, then on the server
+  `create.sh` again with `--collectors-from "<collector address>/32"` (and keep that option in every
+  later run: the firewall rules follow the options given), then on the server
   `./scripts/install.sh settings --collectors-listen 0.0.0.0` and `docker compose up -d zabbix-server`.
   The collector's `ZBX_SERVER_HOST` is the machine's external address. That address changes when the
   machine stops and starts, so keep it:
@@ -119,5 +120,6 @@ In Cloud Shell, from the kit folder:
 ./environments/gcp/delete.sh --project <project ID>
 ```
 
-It deletes the virtual machine with its disk, the firewall rules and the network. Delete the tunnel
-in Cloudflare too (Networking, Tunnels), and the project itself if nothing else uses it.
+It deletes the virtual machine with its disk, the address kept for it (`msp-test-01-ip`, when there is
+one), the firewall rules and the network. Delete the tunnel in Cloudflare too (Networking, Tunnels),
+and the project itself if nothing else uses it.

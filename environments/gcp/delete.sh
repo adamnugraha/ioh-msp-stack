@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Remove what environments/gcp/create.sh made: the virtual machine with its disk, its firewall rules,
-# and its network when nothing else uses it. Everything on the server is lost; back up first if
-# anything there matters (sudo ./scripts/backup.sh, then copy /var/backups/msp off the server).
+# Remove what environments/gcp/create.sh made: the virtual machine with its disk, the address kept for
+# it (NAME-ip), its firewall rules, and its network when nothing else uses it. Everything on the server
+# is lost; back up first if it matters (sudo ./scripts/backup.sh, then copy /var/backups/msp elsewhere).
 #
 #   ./environments/gcp/delete.sh --project <project ID>
 #
@@ -53,6 +53,11 @@ if gcloud compute instances describe "$NAME" --zone "$ZONE" --project "$PROJECT"
   ok "virtual machine $NAME and its disk deleted"
 else
   ok "no virtual machine $NAME in $ZONE"
+fi
+# The external address kept for collectors (the README's day-to-day notes) costs money while unused.
+if gcloud compute addresses describe "$NAME-ip" --region "$REGION" --project "$PROJECT" >/dev/null 2>&1; then
+  gcloud compute addresses delete "$NAME-ip" --region "$REGION" --project "$PROJECT" --quiet
+  ok "external address $NAME-ip released"
 fi
 
 step "Firewall rules and network"

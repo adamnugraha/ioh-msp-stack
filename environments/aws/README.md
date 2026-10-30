@@ -133,5 +133,6 @@ In CloudShell, from the kit folder:
 ./environments/aws/delete.sh
 ```
 
-It terminates the instance with its disk and deletes the security group and the key pair. Delete the
-tunnel in Cloudflare too (Networking, Tunnels).
+It terminates the instance with its disk and deletes the security group and the key pair. An Elastic
+IP you gave the instance stays, and costs money, until you release it (EC2, Elastic IPs, Release).
+Delete the tunnel in Cloudflare too (Networking, Tunnels).
