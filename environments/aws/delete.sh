@@ -65,5 +65,8 @@ fi
 if [ -n "$(q ec2 describe-key-pairs --key-names "$NAME" --query 'KeyPairs[0].KeyName')" ]; then
   aws ec2 delete-key-pair --key-name "$NAME" --region "$REGION"
   ok "key pair $NAME deleted (delete $NAME.pem on your PC too)"
+  # Its private key here is useless now, and create.sh makes a new one under the same name.
+  if [ -f "$NAME.pem" ]; then rm -f "$NAME.pem"; ok "$NAME.pem in this folder deleted"; fi
 fi
-info "The Cloudflare tunnel and its routes stay in Cloudflare: delete them there (Networking, Tunnels)."
+info "The Cloudflare tunnel, its routes and Cloudflare Access stay in Cloudflare: a rebuild (create.sh"
+info "again) uses them as they are. To remove them too: Networking, Tunnels, and Zero Trust, Access."

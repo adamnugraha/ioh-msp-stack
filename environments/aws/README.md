@@ -157,6 +157,7 @@ In CloudShell, from the kit folder:
 ./environments/aws/delete.sh
 ```
 
-It terminates the instance with its disk and deletes the security group and the key pair. An Elastic
-IP you gave the instance stays, and costs money, until you release it (EC2, Elastic IPs, Release).
-Delete the tunnel in Cloudflare too (Networking, Tunnels).
+It terminates the instance with its disk and deletes the security group, the key pair and the
+`msp-test-01.pem` in that folder. An Elastic IP you gave the instance stays, and costs money, until you
+release it (EC2, Elastic IPs, Release). The Cloudflare side stays for a rebuild; when the trial is over,
+delete the tunnel (Networking, Tunnels) and the Access application (Zero Trust, Access) too.

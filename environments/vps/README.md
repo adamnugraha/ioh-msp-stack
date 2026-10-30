@@ -120,5 +120,5 @@ reinstall the VPS with Ubuntu 24.04 in the provider's panel and run the same scr
   every collector still needs its own pre-shared key, but keep such a VPS for trials.
 - **Backups.** `sudo ./scripts/backup.sh` works as everywhere; copy `/var/backups/msp` off the server.
 
-When the trial ends, cancel the server with the provider and delete the tunnel in Cloudflare
-(Networking, Tunnels).
+When the trial ends, cancel the server with the provider, and delete the tunnel (Networking, Tunnels)
+and the Access application (Zero Trust, Access) in Cloudflare.

@@ -80,4 +80,5 @@ if gcloud compute networks describe "$NETWORK" --project "$PROJECT" >/dev/null 2
   gcloud compute networks delete "$NETWORK" --project "$PROJECT" --quiet
   ok "network $NETWORK deleted"
 fi
-info "The Cloudflare tunnel and its routes stay in Cloudflare: delete them there (Networking, Tunnels)."
+info "The Cloudflare tunnel, its routes and Cloudflare Access stay in Cloudflare: a rebuild (create.sh"
+info "again) uses them as they are. To remove them too: Networking, Tunnels, and Zero Trust, Access."

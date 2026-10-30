@@ -146,5 +146,6 @@ In Cloud Shell, from the kit folder:
 ```
 
 It deletes the virtual machine with its disk, the address kept for it (`msp-test-01-ip`, when there is
-one), the firewall rules and the network. Delete the tunnel in Cloudflare too (Networking, Tunnels),
-and the project itself if nothing else uses it.
+one), the firewall rules and the network. The Cloudflare side stays for a rebuild; when the trial is
+over, delete the tunnel (Networking, Tunnels) and the Access application (Zero Trust, Access) too, and
+the project itself if nothing else uses it.
