@@ -735,7 +735,7 @@ stage_proxy() {
   if dc cp proxy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt >/dev/null 2>&1; then
     ok "Caddy's root certificate saved as $KIT_DIR/caddy-root.crt: install it on NOC PCs, or use IOH certificates (see the guide)"
   fi
-  info "Each name must resolve to this server in DNS (or in the hosts file of your PC while testing)."
+  info "Each name must point at this server in DNS (or the hosts file of your PC while testing), or be a route of a Cloudflare Tunnel (environments/cloudflare-tunnel.md)."
 }
 
 stage_grafana() {

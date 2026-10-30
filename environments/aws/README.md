@@ -86,7 +86,7 @@ and the credits left still apply there.
    The domain and the three values after `--subnet` are explained in
    [../cloudflare-tunnel.md](../cloudflare-tunnel.md).
 
-8. **The way in.** Set up the Cloudflare Tunnel and Cloudflare Access:
+8. **The way in.** Cloudflare Access first, then the Cloudflare Tunnel and its routes:
    [../cloudflare-tunnel.md](../cloudflare-tunnel.md), sections 3 to 5.
 
 9. **Staff sign-in, the console and practice data.**

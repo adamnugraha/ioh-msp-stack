@@ -31,19 +31,17 @@ In the installer's settings step, three values make the tunnel the only way in:
   (then `--collectors-listen 0.0.0.0`, the cloud firewall opened to that collector's address only, and
   `docker compose up -d zabbix-server`).
 
-## 3. The tunnel
+## 3. Cloudflare Access, before any name goes public
 
-After `./scripts/install.sh proxy`, in the Cloudflare dashboard:
+Through the tunnel, Caddy sees every visitor arrive from the tunnel's address, which
+`--admin-networks` lets through, so Cloudflare Access is what keeps the engineering tools private. Set
+it up before the routes of section 4: a route published without it puts that tool on the Internet with
+only its own log-in in front.
 
-1. Networking, Tunnels, **Create Tunnel**. Name it after the environment, for example `msp-gcp`.
-2. Under Setup Environment choose Debian, 64-bit. Run the commands shown under Install and Run on
-   the platform server, then select Continue once the tunnel shows Healthy.
-3. Under Routes, **Add route**, **Published application**, once for each name below:
-   - Hostname: the name, and your domain.
-   - Service URL: `https://127.0.0.1:443`.
-   - Additional application settings, TLS: Origin server name set to the same full name (for example
-     `console.<domain>`), and CA pool set to `/opt/ioh-msp-stack/caddy-root.crt`, the certificate the
-     proxy stage saved. Cloudflare then checks Caddy's certificate on the hop inside the server.
+In Cloudflare Zero Trust, add a self-hosted Access application for every name or path the table puts
+behind Access, with a policy that allows only your team's e-mail addresses. Cloudflare's free Zero
+Trust plan covers up to 50 users. Customers keep using GLPI and Grafana without it, and Keycloak's
+sign-in pages stay reachable for staff (only its `/admin` pages sit behind Access).
 
 | Name | For | Through Cloudflare Access |
 |---|---|---|
@@ -53,12 +51,22 @@ After `./scripts/install.sh proxy`, in the Cloudflare dashboard:
 | `glpi` | service desk and customer portal | the paths `/apirest.php` and `/api.php` only |
 | `grafana` | customer dashboards, when they are on | no |
 
-## 4. Cloudflare Access
+## 4. The tunnel
 
-In Cloudflare Zero Trust, add a self-hosted Access application for every name or path marked "yes"
-in the table, with a policy that allows only your team's e-mail addresses. Cloudflare's free Zero Trust
-plan covers up to 50 users. Customers keep using GLPI and Grafana without it, and Keycloak's sign-in
-pages stay reachable for staff (only its `/admin` pages sit behind Access).
+After `./scripts/install.sh proxy`, in the Cloudflare dashboard:
+
+1. Networking, Tunnels, **Create Tunnel**. Name it after the environment, for example `msp-gcp`.
+2. Under Setup Environment choose Debian, 64-bit. Run the commands shown under Install and Run on
+   the platform server, then select Continue once the tunnel shows Healthy.
+3. Under Routes, **Add route**, **Published application**, once for each name in the table of section 3:
+   - Hostname: the name, and your domain.
+   - Service URL: `https://127.0.0.1:443`.
+   - Additional application settings, TLS: Origin server name set to the same full name (for example
+     `console.<domain>`), and CA pool set to `/opt/ioh-msp-stack/caddy-root.crt`, the certificate the
+     proxy stage saved. Cloudflare then checks Caddy's certificate on the hop inside the server.
+
+   Cloudflare creates each name's DNS record itself. It does not replace a record made by hand: delete
+   such a record first (DNS, Records).
 
 ## 5. Check
 
@@ -72,3 +80,4 @@ shows the sign-in with the phone's address next to the tunnel's.
 | Cloudflare error 502 | The route cannot reach Caddy, or the TLS settings do not match | Service URL `https://127.0.0.1:443`, Origin server name exactly the route's name, CA pool as above |
 | Too many redirects | The Service URL uses port 80, which Caddy sends on to HTTPS | Use `https://127.0.0.1:443` |
 | The sign-in does not open, or fails after the password | `sso.<domain>` has no route, or a name does not match the domain | Add the `sso` route, with exactly the names above |
+| A tool opens without Cloudflare Access asking | The Access application does not cover that name | Add the name to the application, then open the page again in a private browser window |

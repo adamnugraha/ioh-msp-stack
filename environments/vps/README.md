@@ -73,7 +73,7 @@ IOH's own test equipment: customers' data belongs on IOH's servers unless IOH ap
    443 and 10051 off the Internet. The rest is explained in
    [../cloudflare-tunnel.md](../cloudflare-tunnel.md).
 
-6. **The way in.** Set up the Cloudflare Tunnel and Cloudflare Access:
+6. **The way in.** Cloudflare Access first, then the Cloudflare Tunnel and its routes:
    [../cloudflare-tunnel.md](../cloudflare-tunnel.md), sections 3 to 5.
 
 7. **Staff sign-in, the console and practice data.**
