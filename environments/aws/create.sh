@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
 # Create the platform's server on AWS: one Ubuntu 24.04 instance in the Region's default network,
-# whose security group lets in SSH from your own address and nothing else. Run it in AWS CloudShell
-# (the >_ button in the AWS console), where the AWS CLI is ready, or on a PC with AWS CLI v2.
+# whose security group lets in SSH from your own address, and with direct access the web on ports 80
+# and 443. Run it in AWS CloudShell (the >_ button in the AWS console), where the AWS CLI is ready, or
+# on a PC with AWS CLI v2.
 #
 #   ./environments/aws/create.sh --ssh-from <your address>/32
 #
@@ -19,15 +20,19 @@
 #   --collectors-from "CIDR ..."  open port 10051 to collectors at these addresses
 #   --autoinstall FILE     the instance then installs the whole platform by itself, with the
 #                          settings in FILE (environments/autoinstall.conf.example); 40 to 75 minutes
+#   --way-in WAY           cloudflare (a Cloudflare Tunnel, no web port open) or direct (ports 80 and
+#                          443 open, an Elastic IP NAME-ip); default: WAY_IN in the settings file,
+#                          else cloudflare
 #   --dry-run              print the AWS CLI commands without running them
 #
 # Running it again is safe: what exists is kept; new --ssh-from addresses are added.
-# ./environments/aws/delete.sh removes everything this script created.
+# ./environments/aws/delete.sh removes everything this script created (the Elastic IP only with
+# --release-address, so a rebuild keeps it and its DNS record).
 # =============================================================================
 set -euo pipefail
 export AWS_PAGER=""
 
-SSH_FROM="" REGION=ap-southeast-3 NAME=msp-test-01 TYPE=m7i-flex.xlarge DISK=100 PUBKEY="" COLLECTORS="" AUTOCONF="" DRY=0
+SSH_FROM="" REGION=ap-southeast-3 NAME=msp-test-01 TYPE=m7i-flex.xlarge DISK=100 PUBKEY="" COLLECTORS="" AUTOCONF="" WAYIN="" DRY=0
 AMI_PARAM=/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
 
 if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; N=$'\033[0m'; else B=; G=; Y=; R=; N=; fi
@@ -36,7 +41,7 @@ ok()   { printf '  %sOK%s     %s\n' "$G" "$N" "$*"; }
 info() { printf '         %s\n' "$*"; }
 warn() { printf '  %sWARN%s   %s\n' "$Y" "$N" "$1"; [ -n "${2:-}" ] && printf '         Fix: %s\n' "$2"; return 0; }
 fail() { printf '\n  %sSTOPPED%s %s\n' "$R" "$N" "$1"; [ -n "${2:-}" ] && printf '  Fix:    %s\n' "$2"; exit 1; }
-usage() { sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -48,6 +53,7 @@ while [ $# -gt 0 ]; do
     --public-key) PUBKEY=${2:-}; shift 2 ;;
     --collectors-from) COLLECTORS=${2:-}; shift 2 ;;
     --autoinstall) AUTOCONF=${2:-}; shift 2 ;;
+    --way-in) WAYIN=${2:-}; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) fail "unknown option '$1'" "./environments/aws/create.sh --help lists the options" ;;
@@ -81,9 +87,21 @@ for e in errors:
     print("  FAIL   " + e)
 sys.exit(1 if errors else 0)
 PY
+# The way in: --way-in, else the settings file's WAY_IN, else the Cloudflare Tunnel.
+KIT=$(cd "$(dirname "$0")/../.." && pwd)
+OVERRIDE=()
+case "$WAYIN" in
+  "") ;;
+  cloudflare | direct) OVERRIDE=("WAY_IN=$WAYIN") ;;
+  *) fail "--way-in '$WAYIN': cloudflare or direct" "./environments/aws/create.sh --help lists the options" ;;
+esac
+DOMAIN="<your domain>"
 if [ -n "$AUTOCONF" ]; then
-  "$(dirname "$0")/../bootstrap.sh" --check "$AUTOCONF" ENVIRONMENT=aws || exit 1   # it says what to correct
+  "$KIT/environments/bootstrap.sh" --check "$AUTOCONF" ENVIRONMENT=aws "${OVERRIDE[@]}" || exit 1   # it says what to correct
+  WAYIN=$(python3 "$KIT/scripts/autoinstall-settings.py" "$AUTOCONF" ENVIRONMENT=aws "${OVERRIDE[@]}" --get WAY_IN)
+  DOMAIN=$(python3 "$KIT/scripts/autoinstall-settings.py" "$AUTOCONF" ENVIRONMENT=aws --get DOMAIN)
 fi
+WAYIN=${WAYIN:-cloudflare}
 if [ -n "$PUBKEY" ]; then
   if ! { [ -r "$PUBKEY" ] && grep -qE '^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp[0-9]+) ' "$PUBKEY"; }; then
     fail "$PUBKEY is not an SSH public key" "give the .pub file, the one that starts with ssh-ed25519 or ssh-rsa"
@@ -181,10 +199,10 @@ if [ -n "$SG" ]; then
   ok "security group $SG exists"
 else
   if [ "$DRY" = 1 ]; then
-    aws_ ec2 create-security-group --group-name "$NAME-sg" --description "IOH MSP platform $NAME: SSH from the admin's address only" --vpc-id "${VPC:-<default VPC>}"
+    aws_ ec2 create-security-group --group-name "$NAME-sg" --description "IOH MSP platform $NAME (environments/aws/create.sh)" --vpc-id "${VPC:-<default VPC>}"
     SG="<security group>"
   else
-    SG=$(aws ec2 create-security-group --group-name "$NAME-sg" --description "IOH MSP platform $NAME: SSH from the admin's address only" \
+    SG=$(aws ec2 create-security-group --group-name "$NAME-sg" --description "IOH MSP platform $NAME (environments/aws/create.sh)" \
       --vpc-id "$VPC" --query GroupId --output text --region "$REGION")
   fi
   ok "security group $SG created"
@@ -201,10 +219,42 @@ allow() {  # allow PORT CIDR WHAT: one inbound rule, skipped when it is there al
     fail "the rule for port $1 from $2 was refused" "read AWS's reason above"
   fi
 }
+disallow() {  # disallow PORT CIDR: remove one inbound rule, when it is there
+  if [ "$DRY" = 1 ]; then return 0; fi
+  if aws ec2 revoke-security-group-ingress --group-id "$SG" --protocol tcp --port "$1" --cidr "$2" --region "$REGION" >/dev/null 2>&1; then
+    ok "port $1 from $2 removed (the way in is the Cloudflare Tunnel now)"
+  fi
+}
 for c in $SSH_FROM; do allow 22 "$c" "SSH"; done
 for c in $COLLECTORS; do allow 10051 "$c" "collector at a customer site"; done
-info "Nothing else gets in: browsers come through the Cloudflare Tunnel, which connects out."
+if [ "$WAYIN" = direct ]; then
+  allow 80 0.0.0.0/0 "browsers, and Let's Encrypt's checks"
+  allow 443 0.0.0.0/0 "browsers"
+  info "Nothing else gets in. The sign-in gate on the server keeps the engineers' tools private."
+else
+  disallow 80 0.0.0.0/0
+  disallow 443 0.0.0.0/0
+  info "Nothing else gets in: browsers come through the Cloudflare Tunnel, which connects out."
+fi
 info "An address you no longer use stays allowed until you remove it (EC2, Security groups, $NAME-sg)."
+
+# ------------------------------------------------------------------ Elastic IP (direct access)
+EIP="" EIP_ALLOC=""
+if [ "$WAYIN" = direct ]; then
+  step "Elastic IP $NAME-ip (the same after a stop, a start or a rebuild)"
+  read -r EIP_ALLOC EIP <<<"$(ask ec2 describe-addresses --filters "Name=tag:Name,Values=$NAME-ip" --query 'Addresses[0].[AllocationId,PublicIp]')" || true
+  if [ -n "$EIP_ALLOC" ]; then
+    ok "Elastic IP $NAME-ip exists: $EIP"
+  elif [ "$DRY" = 1 ]; then
+    aws_ ec2 allocate-address --domain vpc --tag-specifications "ResourceType=elastic-ip,Tags=[{Key=Name,Value=$NAME-ip}]"
+    EIP="<the Elastic IP>" EIP_ALLOC="<allocation ID>"
+  else
+    read -r EIP_ALLOC EIP <<<"$(aws ec2 allocate-address --domain vpc --tag-specifications "ResourceType=elastic-ip,Tags=[{Key=Name,Value=$NAME-ip}]" \
+      --query '[AllocationId,PublicIp]' --output text --region "$REGION")" || true
+    [ -n "$EIP" ] || fail "AWS gave no Elastic IP" "an account may hold 5 per Region: release one you no longer use (EC2, Elastic IPs), then run this again"
+    ok "Elastic IP $EIP allocated as $NAME-ip"
+  fi
+fi
 
 # ------------------------------------------------------------------ instance
 step "Instance $NAME"
@@ -222,7 +272,7 @@ else
   if [ -n "$AUTOCONF" ]; then
     USERDATA=$(mktemp)
     trap 'rm -f "$USERDATA"' EXIT
-    "$(dirname "$0")/../bootstrap.sh" "$AUTOCONF" ENVIRONMENT=aws POOL="$POOL" > "$USERDATA" || exit 1
+    "$KIT/environments/bootstrap.sh" "$AUTOCONF" ENVIRONMENT=aws POOL="$POOL" "${OVERRIDE[@]}" > "$USERDATA" || exit 1
     [ "$(wc -c < "$USERDATA")" -le 16384 ] || fail "the start script is larger than AWS's 16 KB for user data" \
       "shorten long values in $AUTOCONF"
   fi
@@ -247,14 +297,34 @@ else
     aws ec2 wait instance-running --instance-ids "$ID" --region "$REGION"
   fi
 fi
+if [ "$WAYIN" = direct ]; then
+  if [ "$DRY" = 1 ]; then
+    aws_ ec2 associate-address --allocation-id "$EIP_ALLOC" --instance-id "${ID:-<instance ID>}" --allow-reassociation
+  elif [ "$(ask ec2 describe-addresses --allocation-ids "$EIP_ALLOC" --query 'Addresses[0].InstanceId')" != "$ID" ]; then
+    aws ec2 associate-address --allocation-id "$EIP_ALLOC" --instance-id "$ID" --allow-reassociation --region "$REGION" >/dev/null ||
+      fail "the Elastic IP $EIP could not be given to $ID (AWS's reason is above)" "run the command again in a minute"
+    ok "Elastic IP $EIP now belongs to $ID"
+  else
+    ok "Elastic IP $EIP belongs to $ID"
+  fi
+fi
 IP=$(ask ec2 describe-instances --instance-ids "${ID:-i-none}" --query 'Reservations[0].Instances[0].PublicIpAddress')
-if [ "$DRY" = 1 ]; then IP="<its public address>"; ID="<instance ID>"; fi
+if [ "$WAYIN" = direct ]; then IP=$EIP; fi
+if [ "$DRY" = 1 ]; then IP=${EIP:-<its public address>}; ID="<instance ID>"; fi
 
 # ------------------------------------------------------------------ next
 step "Next"
 LOGIN="ssh ubuntu@$IP"
 if [ -n "$KEYFILE" ]; then LOGIN="ssh -i $KEYFILE ubuntu@$IP"; fi
 info "Connect from your PC:  $LOGIN"
+if [ "$WAYIN" = direct ]; then
+  info ""
+  info "DNS, now: at your DNS provider, point every name under the domain at $EIP. One record does it:"
+  info "  *.$DOMAIN   A   $EIP       (on Cloudflare: DNS only, the grey cloud)"
+  info "The install waits for it before Let's Encrypt is asked for certificates. The Elastic IP stays the"
+  info "instance's for good: delete.sh keeps it for a rebuild, so the record stays right."
+  info ""
+fi
 if [ -n "$AUTOCONF" ]; then
   info "The instance installs the platform by itself, 40 to 75 minutes. How far it is, any time:"
   info "  $LOGIN sudo /opt/ioh-msp-stack/scripts/autoinstall.sh status"
@@ -265,7 +335,9 @@ else
   info "Where the server runs: AWS. On the server, prepare-server.sh takes --no-firewall --pool $POOL:"
   info "the security group protects the server, and the pool stays clear of AWS's network."
 fi
-info "The public address changes after a stop and start; this shows the current one:"
-info "  aws ec2 describe-instances --instance-ids $ID --region $REGION --query 'Reservations[0].Instances[0].PublicIpAddress' --output text"
+if [ "$WAYIN" != direct ]; then
+  info "The public address changes after a stop and start; this shows the current one:"
+  info "  aws ec2 describe-instances --instance-ids $ID --region $REGION --query 'Reservations[0].Instances[0].PublicIpAddress' --output text"
+fi
 info "Stop it when you are not testing (the disk still costs a little):"
 info "  aws ec2 stop-instances --instance-ids $ID --region $REGION"

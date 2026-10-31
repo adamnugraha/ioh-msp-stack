@@ -3,6 +3,7 @@
 
     autoinstall-settings.py FILE [--server] [KEY=VALUE ...]          every value, NUL-separated
     autoinstall-settings.py FILE --clean [KEY=VALUE ...]             the file as KEY='VALUE' lines
+    autoinstall-settings.py FILE --get KEY [KEY=VALUE ...]           one value (the create scripts use it)
 
 Lines are KEY=VALUE; a value with spaces needs quotes; # starts a note. KEY=VALUE arguments set or
 replace a value. --server also checks what only the server can see (time zones, the proxy CA file).
@@ -17,12 +18,18 @@ import sys
 
 DEFAULTS = {
     "ENVIRONMENT": "", "DOMAIN": "", "STAFF_EMAIL": "", "STAFF_NAME": "", "NOC_EMAIL": "",
-    "CLOUDFLARE_TUNNEL_TOKEN": "", "SAMPLES": "no", "SSO_TOOLS": "yes", "GRAFANA": "no", "BACKUP": "yes",
+    "WAY_IN": "cloudflare", "CLOUDFLARE_TUNNEL_TOKEN": "", "PUBLIC_ADDRESS": "", "SAMPLES": "no", "SSO_TOOLS": "yes", "GRAFANA": "no", "BACKUP": "yes",
     "TIMEZONE": "Asia/Jakarta", "SUBNET": "172.30.0.0/24", "POOL": "172.31.0.0/16",
     "SSH_FROM": "", "ADMIN_NETWORKS": "", "PROXY": "", "PROXY_CA": "",
     "DOCKERHUB_USER": "", "DOCKERHUB_TOKEN": "", "INSTALL_USER": "msp", "KIT_URL": "", "KIT_SHA256": "",
 }
 EMAIL = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+
+
+def made_up(address):  # an example address, which Let's Encrypt refuses for its account
+    host = address.rsplit("@", 1)[-1].lower()
+    return host.split(".")[-1] in ("internal", "local", "test", "invalid", "example", "localhost") or \
+        any(host == d or host.endswith("." + d) for d in ("example.com", "example.org", "example.net"))
 
 
 def parse(path, overrides, errors):
@@ -111,6 +118,25 @@ def check(v, server, errors):
             errors.append(f"{name} '{v[name]}': yes or no")
     if v["CLOUDFLARE_TUNNEL_TOKEN"] and not re.fullmatch(r"[A-Za-z0-9+/=_-]{50,}", v["CLOUDFLARE_TUNNEL_TOKEN"]):
         errors.append('CLOUDFLARE_TUNNEL_TOKEN is not a tunnel token (the long string after "cloudflared service install")')
+    way = v["WAY_IN"]
+    if way not in ("cloudflare", "direct"):
+        errors.append(f"WAY_IN '{way}': cloudflare (a Cloudflare Tunnel) or direct (straight from the Internet)")
+    elif way == "direct":
+        if env == "ioh":
+            errors.append("WAY_IN=direct is for gcp, aws and vps; inside IOH, browsers come through IOH's network")
+        if v["CLOUDFLARE_TUNNEL_TOKEN"]:
+            errors.append("WAY_IN=direct needs no tunnel: leave CLOUDFLARE_TUNNEL_TOKEN empty (or set WAY_IN=cloudflare)")
+        acme = v["NOC_EMAIL"] or v["STAFF_EMAIL"]
+        if re.fullmatch(EMAIL, acme) and made_up(acme):
+            errors.append(f"WAY_IN=direct: Let's Encrypt refuses the made-up address {acme} "
+                          "(it takes NOC_EMAIL, or else STAFF_EMAIL): use a real one")
+    if v["PUBLIC_ADDRESS"]:
+        try:
+            a = ipaddress.ip_address(v["PUBLIC_ADDRESS"])
+            if a.version != 4 or not a.is_global:
+                errors.append(f"PUBLIC_ADDRESS {a} is not an IPv4 address on the Internet")
+        except ValueError:
+            errors.append(f"PUBLIC_ADDRESS '{v['PUBLIC_ADDRESS']}' is not an IPv4 address such as 203.0.113.10")
     if bool(v["DOCKERHUB_USER"]) != bool(v["DOCKERHUB_TOKEN"]):
         errors.append("DOCKERHUB_USER and DOCKERHUB_TOKEN go together")
     if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", v["INSTALL_USER"]) or v["INSTALL_USER"] == "root":
@@ -129,6 +155,14 @@ def main():
     path, rest = args[0], args[1:]
     server = "--server" in rest
     clean = "--clean" in rest
+    get = ""
+    if "--get" in rest:
+        i = rest.index("--get")
+        get = rest[i + 1] if i + 1 < len(rest) else ""
+        rest = rest[:i] + rest[i + 2:]
+        if get not in DEFAULTS:
+            print(f"  FAIL   --get: unknown setting '{get}'", file=sys.stderr)
+            return 1
     overrides = [a for a in rest if a not in ("--server", "--clean")]
     errors = []
     given = parse(path, overrides, errors)
@@ -141,7 +175,9 @@ def main():
         for e in errors:
             print("  FAIL   " + e, file=sys.stderr)
         return 1
-    if clean:
+    if get:
+        print(values[get])
+    elif clean:
         for key in DEFAULTS:
             if key in given:
                 print(f"{key}={shlex.quote(values[key])}")

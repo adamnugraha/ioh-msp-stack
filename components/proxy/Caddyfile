@@ -1,16 +1,27 @@
 # Reverse proxy and TLS for every web interface of the platform.
 #
-# Certificates: by default (CADDY_TLS=internal in .env) Caddy acts as its own small certificate
-# authority, which is fine for internal names (*.msp.example.internal). Install Caddy's root
-# certificate on NOC PCs: ./scripts/install.sh proxy saves it as caddy-root.crt in the kit folder.
-# To use IOH certificates instead (a certificate for *.<MSP_DOMAIN>, or one listing every name below):
-#   ./scripts/install.sh certs <fullchain.pem> <privkey.pem>
-# It checks the pair, copies it to components/proxy/certs/ and sets
-# CADDY_TLS="/certs/fullchain.pem /certs/privkey.pem" in .env. The setting lives in .env, so kit
-# updates never undo it.
+# Certificates (CADDY_TLS in .env; it lives there, so kit updates never undo it):
+#   internal   the default: Caddy acts as its own small certificate authority, which is fine for
+#              internal names (*.msp.example.internal). Install Caddy's root certificate on NOC PCs:
+#              ./scripts/install.sh proxy saves it as caddy-root.crt in the kit folder.
+#   IOH certificates (a certificate for *.<MSP_DOMAIN>, or one listing every name below):
+#              ./scripts/install.sh certs <fullchain.pem> <privkey.pem> checks the pair, copies it to
+#              components/proxy/certs/ and sets CADDY_TLS="/certs/fullchain.pem /certs/privkey.pem".
+#   an e-mail address
+#              certificates from Let's Encrypt, for a server that browsers reach straight from the
+#              Internet (./scripts/install.sh settings --way-in direct sets it). Every name below then
+#              points at this server in public DNS, and ports 80 and 443 are open to the Internet.
 #
-# Access: tools for engineers answer only from ADMIN_NETWORKS (NOC, VPN). The GLPI customer
-# portal and Grafana answer from anywhere, but GLPI's API paths stay internal.
+# Access: tools for engineers answer only from ADMIN_NETWORKS (NOC, VPN). The GLPI customer portal and
+# Grafana answer from anywhere, but GLPI's API paths and Keycloak's administration stay with engineers.
+# STAFF_GATE in .env decides what stands in front of those tools and paths as well:
+#   off        nothing more: the network keeps them private (IOH's network, or Cloudflare Access in
+#              front of a Cloudflare Tunnel)
+#   keycloak   the sign-in gate (oauth2-proxy, ./scripts/install.sh gate): a browser first signs in with
+#              a staff account in Keycloak, and only the roles msp-manager, msp-engineer and
+#              msp-automation get through
+#   closed     those tools answer 503 until the gate is on (direct access, before ./scripts/install.sh gate)
+# Each engineers' site keeps its rules in a route block, so the address rule always comes first.
 {
 	email noc@example.internal
 }
@@ -24,41 +35,89 @@
 	respond @outside "This service is only available from the IOH network." 403
 }
 
+# What stands in front of an engineers' tool: import gate_{$STAFF_GATE:off} <the tool's address>.
+(gate_off) {
+	reverse_proxy {args[0]}
+}
+
+(gate_closed) {
+	respond "Staff sign-in is not ready yet." 503
+}
+
+(gate_keycloak) {
+	# The gate's own pages: sign-in, the return from Keycloak, sign-out.
+	handle /oauth2/* {
+		reverse_proxy oauth2-proxy:4180 {
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-Uri {uri}
+		}
+	}
+	# Everything else: ask the gate first. Signed in with a staff role: on to the tool. Not signed in:
+	# the gate starts the sign-in, which comes back to the whole address, query string included.
+	handle {
+		forward_auth oauth2-proxy:4180 {
+			uri /oauth2/auth
+			header_up X-Real-IP {remote_host}
+			@signin status 401
+			handle_response @signin {
+				rewrite * /oauth2/start?
+				reverse_proxy oauth2-proxy:4180 {
+					header_up X-Real-IP {remote_host}
+					header_up X-Forwarded-Uri {http.request.orig_uri}
+				}
+			}
+		}
+		reverse_proxy {args[0]}
+	}
+}
+
 nautobot.{$MSP_DOMAIN} {
 	import site_tls
-	import engineers_only
-	reverse_proxy nautobot:8080
+	route {
+		import engineers_only
+		import gate_{$STAFF_GATE:off} nautobot:8080
+	}
 }
 
 zabbix.{$MSP_DOMAIN} {
 	import site_tls
-	import engineers_only
-	reverse_proxy zabbix-web:8080
+	route {
+		import engineers_only
+		import gate_{$STAFF_GATE:off} zabbix-web:8080
+	}
 }
 
 semaphore.{$MSP_DOMAIN} {
 	import site_tls
-	import engineers_only
-	reverse_proxy semaphore:3000
+	route {
+		import engineers_only
+		import gate_{$STAFF_GATE:off} semaphore:3000
+	}
 }
 
 git.{$MSP_DOMAIN} {
 	import site_tls
-	import engineers_only
-	reverse_proxy forgejo:3000
+	route {
+		import engineers_only
+		import gate_{$STAFF_GATE:off} forgejo:3000
+	}
 }
 
 glue.{$MSP_DOMAIN} {
 	import site_tls
-	import engineers_only
-	reverse_proxy msp-glue:80
+	route {
+		import engineers_only
+		import gate_{$STAFF_GATE:off} msp-glue:80
+	}
 }
 
 # MSP Console: one interface over every tool, sign-in through Keycloak (sso.{$MSP_DOMAIN}).
 console.{$MSP_DOMAIN} {
 	import site_tls
-	import engineers_only
-	reverse_proxy msp-console:8000
+	route {
+		import engineers_only
+		import gate_{$STAFF_GATE:off} msp-console:8000
+	}
 }
 
 # Customer-facing: the service desk portal. The REST APIs are for the platform only.
@@ -68,8 +127,16 @@ glpi.{$MSP_DOMAIN} {
 		path /apirest.php* /api.php*
 		not remote_ip {$ADMIN_NETWORKS}
 	}
-	respond @api_outside "Not available" 403
-	reverse_proxy glpi:80
+	@staff path /apirest.php* /api.php* /oauth2/*
+	route {
+		respond @api_outside "Not available" 403
+		handle @staff {
+			import gate_{$STAFF_GATE:off} glpi:80
+		}
+		handle {
+			reverse_proxy glpi:80
+		}
+	}
 }
 
 # Customer-facing (phase 3): dashboards.
@@ -78,14 +145,22 @@ grafana.{$MSP_DOMAIN} {
 	reverse_proxy grafana:3000
 }
 
-# Single sign-on (Keycloak). The browser comes here to sign in to the MSP Console; the Keycloak
-# administration pages stay internal.
+# Single sign-on (Keycloak). The browser comes here to sign in to the MSP Console and the tools; the
+# Keycloak administration (its pages and the master realm) stays with engineers.
 sso.{$MSP_DOMAIN} {
 	import site_tls
 	@admin_outside {
-		path /admin*
+		path /admin* /realms/master*
 		not remote_ip {$ADMIN_NETWORKS}
 	}
-	respond @admin_outside "Not available" 403
-	reverse_proxy keycloak:8080
+	@staff path /admin* /realms/master* /oauth2/*
+	route {
+		respond @admin_outside "Not available" 403
+		handle @staff {
+			import gate_{$STAFF_GATE:off} keycloak:8080
+		}
+		handle {
+			reverse_proxy keycloak:8080
+		}
+	}
 }

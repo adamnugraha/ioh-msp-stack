@@ -15,11 +15,18 @@
 #   proxy     HTTPS for every tool on https://<tool>.<domain> through Caddy (needs the DNS names)
 #   grafana   customer dashboards (phase 3 of the build plan)
 #   sso [--admin-email <e-mail> --name "<full name>"]   Keycloak sign-in for staff, first administrator
+#   gate [off]   the sign-in gate in front of the engineers' tools (direct access: after sso, before proxy)
 #   console   the MSP Console on https://console.<domain> (needs sso)
 #   sso-tools [grafana forgejo nautobot semaphore zabbix]   staff sign in to the tools with Keycloak too
 #   chat telegram|teams|email|test|off   problems on managed devices to the NOC chat (Versus Incident)
 #   certs <fullchain.pem> <privkey.pem>   use IOH certificates instead of Caddy's own (certs internal: back)
+#   dns [--wait MINUTES]   direct access: does every name point at this server? (proxy checks it too)
 #   samples [off]   two made-up customers with simulated devices, to practise on (off: stop monitoring them)
+#
+# How browsers reach the platform: settings --way-in ioh (IOH's network), cloudflare (a Cloudflare Tunnel
+# on this server) or direct (straight from the Internet, with Let's Encrypt certificates and the sign-in
+# gate: environments/direct-access.md). Each sets the listen addresses, ADMIN_NETWORKS and certificates
+# that go with it; an option given as well wins.
 #
 # Every stage can run again safely. A failed stage stops with the reason, the fix and the command
 # that continues after the fix. Output goes to install.log.
@@ -36,7 +43,8 @@ KIT_DIR=$(pwd)
 STATE_FILE=.install-state
 LOG_FILE=install.log
 CORE_STAGES=(preflight settings network images start glpi-api forgejo-admin tokens platform glue harden check)
-ALL_STAGES=("${CORE_STAGES[@]}" proxy grafana sso console sso-tools chat)
+ALL_STAGES=("${CORE_STAGES[@]}" proxy grafana sso gate console sso-tools chat)
+PROXY_NAMES="glpi nautobot zabbix semaphore git glue console grafana sso"   # every site in the Caddyfile
 NAUTOBOT_TAG=msp/nautobot:3.2.6-gc3.0.8
 GLUE_TAG=msp/glue:1.2
 GRAFANA_PLUGIN_VERSION=6.8.0
@@ -373,7 +381,7 @@ for line in sys.stdin:
 
 stage_settings() {
   step "Settings (.env)"
-  local domain="" nets="" subnet="" tz="" zurl="" gurl="" email="" web="" coll=""
+  local domain="" nets="" subnet="" tz="" zurl="" gurl="" email="" web="" coll="" way="" le="" public=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --domain) domain=${2:-}; shift 2 ;;
@@ -385,17 +393,35 @@ stage_settings() {
       --email) email=${2:-}; shift 2 ;;
       --web-listen) web=${2:-}; shift 2 ;;
       --collectors-listen) coll=${2:-}; shift 2 ;;
-      *) fail "unknown option '$1' for settings" "use --domain --admin-networks --subnet --tz --email (and optionally --zabbix-url --glpi-url --web-listen --collectors-listen)" ;;
+      --way-in) way=${2:-}; shift 2 ;;
+      --letsencrypt-email) le=${2:-}; shift 2 ;;
+      --public-address) public=${2:-}; shift 2 ;;
+      *) fail "unknown option '$1' for settings" "use --domain --admin-networks --subnet --tz --email (and optionally --way-in --zabbix-url --glpi-url --web-listen --collectors-listen --letsencrypt-email --public-address)" ;;
     esac
   done
   if [ ! -f .env ]; then
     ./scripts/gen-env.sh
   fi
   chmod 600 .env
-  python3 - "$domain" "$nets" "$subnet" "$tz" "$email" "$web" "$coll" <<'PY' || fail "a setting is not valid (see above)" "correct it and run the settings command again"
+  load_env
+  # Checks every value; with --way-in, also works out the values that go with that way in. The result
+  # comes back as KEY<tab>VALUE lines; problems go to the screen as FAIL lines.
+  local derived tls="" gate=""
+  derived=$(python3 - "$domain" "$nets" "$subnet" "$tz" "$email" "$web" "$coll" "$way" "$le" "$public" \
+    "${MSP_SUBNET:-172.30.0.0/24}" "${ADMIN_NETWORKS:-}" "${NAUTOBOT_SUPERUSER_EMAIL:-}" "${CADDY_TLS:-internal}" \
+    "${STAFF_GATE:-off}" "${WAY_IN:-}" <<'PY'
 import ipaddress, os, re, sys
-domain, nets, subnet, tz, email, web, coll = sys.argv[1:8]
+(domain, nets, subnet, tz, email, web, coll, way, le, public,
+ cur_subnet, cur_nets, cur_email, cur_tls, cur_gate, cur_way) = sys.argv[1:17]
 errors = []
+EMAIL = r"[^@\s]+@[^@\s]+\.[^@\s]+"
+
+def usable(address):  # an address Let's Encrypt takes for its account: not one of the example domains
+    if not re.fullmatch(EMAIL, address):
+        return False
+    host = address.rsplit("@", 1)[1].lower()
+    return host.split(".")[-1] not in ("internal", "local", "test", "invalid", "example", "localhost") and \
+        not any(host == d or host.endswith("." + d) for d in ("example.com", "example.org", "example.net"))
 for flag, value in (("--web-listen", web), ("--collectors-listen", coll)):
     if value and value not in ("0.0.0.0", "127.0.0.1"):
         errors.append(f"{flag} '{value}' must be 0.0.0.0 (every network) or 127.0.0.1 (this server only)")
@@ -406,6 +432,7 @@ for n in nets.split():
         ipaddress.ip_network(n, strict=False)
     except ValueError:
         errors.append(f"--admin-networks: '{n}' is not an address range such as 10.10.0.0/16")
+first = ""
 if subnet:
     try:
         net = ipaddress.ip_network(subnet, strict=True)
@@ -413,14 +440,75 @@ if subnet:
             errors.append(f"--subnet {subnet} is too small: use a /24 (or at least a /26)")
     except ValueError:
         errors.append(f"--subnet '{subnet}' is not a network address such as 172.30.0.0/24")
+try:  # the platform network's first address: where visitors through a tunnel, or this server itself, come from
+    first = f"{ipaddress.ip_network(subnet or cur_subnet, strict=False).network_address + 1}/32"
+except ValueError:
+    pass
 if tz and not os.path.exists(f"/usr/share/zoneinfo/{tz}"):
     errors.append(f"--tz '{tz}' is not a known time zone, for example Asia/Jakarta")
-if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+if email and not re.fullmatch(EMAIL, email):
     errors.append(f"--email '{email}' is not an e-mail address")
+if le and not re.fullmatch(EMAIL, le):
+    errors.append(f"--letsencrypt-email '{le}' is not an e-mail address")
+if le and way != "direct" and not (cur_way == "direct" and not way):
+    errors.append("--letsencrypt-email goes with --way-in direct")
+if public and public != "auto":
+    try:
+        if not (ipaddress.ip_address(public).version == 4 and ipaddress.ip_address(public).is_global):
+            errors.append(f"--public-address {public} is not an address on the Internet")
+    except ValueError:
+        errors.append(f"--public-address '{public}' is not an IPv4 address such as 203.0.113.10")
+out = {}
+open_lists = [n for n in (nets or cur_nets).split() if n.endswith("/0")]
+if way == "direct":
+    out["web"], out["coll"] = web or "0.0.0.0", coll or "127.0.0.1"
+    # Engineers may come from anywhere: the sign-in gate decides. With your own list, the server stays in it,
+    # so its own checks reach the tools.
+    out["nets"] = f"{nets} {first}".strip() if nets else "0.0.0.0/0 ::/0"
+    acme = le or email or (cur_email if usable(cur_email) else "") or (cur_tls if "@" in cur_tls else "")
+    if not acme:
+        errors.append("--way-in direct needs an e-mail address for Let's Encrypt: add --letsencrypt-email <your e-mail>")
+    elif not usable(acme):
+        errors.append(f"Let's Encrypt refuses made-up addresses such as {acme}: add --letsencrypt-email <your own e-mail>")
+    out["tls"] = acme
+    out["gate"] = "keycloak" if cur_gate == "keycloak" else "closed"
+elif way in ("cloudflare", "ioh"):
+    listen = "127.0.0.1" if way == "cloudflare" else "0.0.0.0"
+    out["web"], out["coll"] = web or listen, coll or listen
+    if way == "cloudflare":
+        out["nets"] = nets or first
+    elif not nets and open_lists:
+        errors.append("--way-in ioh needs --admin-networks with the NOC and VPN ranges: "
+                      f"the current list lets everyone in ({' '.join(open_lists)})")
+    else:
+        out["nets"] = nets
+    if "@" in cur_tls:
+        out["tls"] = "internal"   # Let's Encrypt cannot reach the server there; Caddy's own again
+    if cur_gate == "closed":
+        out["gate"] = "off"
+elif way:
+    errors.append(f"--way-in '{way}': ioh (IOH's network), cloudflare (a Cloudflare Tunnel on this server) "
+                  "or direct (straight from the Internet)")
+else:
+    out["nets"], out["web"], out["coll"] = nets, web, coll
 for e in errors:
-    print("  FAIL   " + e)
-sys.exit(1 if errors else 0)
+    print("  FAIL   " + e, file=sys.stderr)
+if errors:
+    sys.exit(1)
+for key, value in out.items():
+    print(f"{key}\t{value}")
 PY
+  ) || fail "a setting is not valid (see above)" "correct it and run the settings command again"
+  local key value
+  while IFS=$'\t' read -r key value; do
+    case "$key" in
+      nets) nets=$value ;;
+      web) web=$value ;;
+      coll) coll=$value ;;
+      tls) tls=$value ;;
+      gate) gate=$value ;;
+    esac
+  done <<< "$derived"
   if [ -n "$subnet" ] && docker network inspect msp >/dev/null 2>&1; then
     local have; have=$(docker network inspect msp -f '{{(index .IPAM.Config 0).Subnet}}')
     [ "$have" = "$subnet" ] || fail "the msp network already exists with $have" \
@@ -441,20 +529,45 @@ PY
   [ -n "$email" ] && set_env NAUTOBOT_SUPERUSER_EMAIL "$email"
   [ -n "$web" ] && set_env WEB_LISTEN_ADDRESS "$web"
   [ -n "$coll" ] && set_env COLLECTOR_LISTEN_ADDRESS "$coll"
+  [ -n "$way" ] && set_env WAY_IN "$way"
+  [ -n "$tls" ] && set_env CADDY_TLS "$tls"
+  [ -n "$gate" ] && set_env STAFF_GATE "$gate"
+  if [ "$public" = auto ]; then set_env PUBLIC_ADDRESS ""; elif [ -n "$public" ]; then set_env PUBLIC_ADDRESS "$public"; fi
   load_env
   ok "domain           $MSP_DOMAIN"
+  ok "way in           $(way_in_text)"
   ok "admin networks   $ADMIN_NETWORKS"
   ok "platform network ${MSP_SUBNET:-172.30.0.0/24}"
   ok "time zone        $TZ"
   ok "Zabbix and GLPI  $ZABBIX_PUBLIC_URL  $GLPI_PUBLIC_URL"
   ok "listens on       web ${WEB_LISTEN_ADDRESS:-0.0.0.0}, collectors ${COLLECTOR_LISTEN_ADDRESS:-0.0.0.0}"
-  if [ -n "$web$coll" ] && [ "$(docker ps -q --filter label=com.docker.compose.project="${COMPOSE_PROJECT_NAME:-ioh-msp-stack}" 2>/dev/null | head -n 1)" ]; then
-    info "The platform runs already: docker compose up -d proxy zabbix-server applies the new listen addresses."
+  ok "certificates     $(certificates_text)"
+  ok "sign-in gate     ${STAFF_GATE:-off}"
+  if [ -n "$web$coll$tls$gate" ] && [ "$(docker ps -q --filter label=com.docker.compose.project="${COMPOSE_PROJECT_NAME:-ioh-msp-stack}" 2>/dev/null | head -n 1)" ]; then
+    info "The platform runs already: docker compose up -d proxy zabbix-server applies the new listen addresses and proxy settings."
   fi
   if [ "$MSP_DOMAIN" = msp.example.internal ]; then
     fail "the domain is still the example value msp.example.internal" "./scripts/install.sh settings --domain <your domain, for example msp.ioh.internal>"
   fi
   info "All passwords and keys were generated into .env (readable by you only). Keep a copy in your password manager."
+  if [ "${WAY_IN:-}" = direct ]; then
+    info "Direct access: after the core stages, run sso, then gate, then proxy (environments/direct-access.md)."
+  fi
+}
+
+way_in_text() {  # the way in, in words, from .env
+  case "${WAY_IN:-}" in
+    direct) echo "direct: browsers come straight from the Internet to this server, ports 80 and 443" ;;
+    cloudflare) echo "cloudflare: a Cloudflare Tunnel on this server, with Cloudflare Access in front" ;;
+    *) echo "ioh: IOH's network and DNS" ;;
+  esac
+}
+certificates_text() {  # where the proxy's certificates come from, in words, from .env
+  case "${CADDY_TLS:-internal}" in
+    internal) echo "Caddy's own (caddy-root.crt on NOC PCs; IOH certificates: ./scripts/install.sh certs)" ;;
+    *@*) echo "Let's Encrypt, account ${CADDY_TLS}, renewed by Caddy" ;;
+    *) echo "IOH certificates in components/proxy/certs" ;;
+  esac
 }
 
 stage_network() {
@@ -713,29 +826,176 @@ stage_proxy() {
   step "Reverse proxy with HTTPS (Caddy)"
   load_env
   [ "${MSP_DOMAIN:-msp.example.internal}" != msp.example.internal ] || fail "MSP_DOMAIN is still the example" "./scripts/install.sh settings --domain <your domain>"
+  local acme=""
+  case "${CADDY_TLS:-internal}" in *@*) acme=1 ;; esac
+  if [ -n "$acme" ]; then
+    # Let's Encrypt checks every name over the Internet, so each one must point here before Caddy asks.
+    info "Let's Encrypt certificates: first, every name must point at this server in DNS"
+    dns_check 0 || fail "not every name points at this server yet" \
+      "create the records shown above at your DNS provider (on Cloudflare: DNS only, the grey cloud), then ./scripts/install.sh proxy again"
+  fi
+  case "${STAFF_GATE:-off}" in
+    keycloak) health_is oauth2-proxy healthy || fail "the sign-in gate is not running" "./scripts/install.sh gate" ;;
+    closed) warn "the engineers' tools stay closed (503) until the sign-in gate is on" "./scripts/install.sh sso, then ./scripts/install.sh gate" ;;
+  esac
   add_profile proxy
   mkdir -p components/proxy/certs
   dc_up proxy || fail "the reverse proxy did not start" "read the message above (ports 80 and 443 must be free), then run ./scripts/install.sh proxy"
   wait_for "Caddy" 120 "docker compose logs --tail 50 proxy" health_is proxy running
   sleep 3
-  local t code url
+  if [ -n "$acme" ]; then acme_wait; fi
+  local t out code where url
   local names="glpi nautobot zabbix semaphore git glue"
   [[ ",${COMPOSE_PROFILES:-}," == *,console,* ]] && names="$names console"
+  [[ ",${COMPOSE_PROFILES:-}," == *,sso,* ]] && names="$names sso"
   for t in $names; do
     url="https://$t.$MSP_DOMAIN/"
-    [ "$t" = glue ] || [ "$t" = console ] && url="${url}healthz"
-    code=$(curl -sk --noproxy '*' -o /dev/null -m 20 -w '%{http_code}' --resolve "$t.$MSP_DOMAIN:443:127.0.0.1" "$url" || true)
+    case "$t" in
+      glue | console) url="${url}healthz" ;;
+      sso) url="${url}realms/msp/.well-known/openid-configuration" ;;
+    esac
+    out=$(curl -sk --noproxy '*' -o /dev/null -m 20 -w '%{http_code} %{redirect_url}' --resolve "$t.$MSP_DOMAIN:443:127.0.0.1" "$url" || true)
+    code=${out%% *}
+    where=${out#* }
     case "$code" in
+      302) if [[ "$where" == "https://$t.$MSP_DOMAIN/oauth2/sign_in?"* ]]; then ok "$url answers (302: the sign-in gate asks who it is first)"
+           else ok "$url answers ($code)"; fi ;;
       2* | 3*) ok "$url answers ($code)" ;;
       403) ok "$url answers (403 here: this server is outside ADMIN_NETWORKS, as intended)" ;;
+      503) if [ "${STAFF_GATE:-off}" = closed ]; then ok "$url is closed until the sign-in gate is on (503, as intended)"
+           else bad "$url gave '$code'" "docker compose logs --tail 50 proxy"; fi ;;
       *) bad "$url gave '$code'" "docker compose logs --tail 50 proxy" ;;
     esac
   done
   [ "$PROBLEMS" = 0 ] || fail "the reverse proxy does not answer for every tool" "docker compose logs --tail 50 proxy"
+  if [ "${STAFF_GATE:-off}" = keycloak ]; then gate_check; fi
+  if [ -n "$acme" ]; then
+    info "Browsers trust Let's Encrypt's certificates as they are: there is nothing to install on PCs."
+    return 0
+  fi
   if dc cp proxy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt >/dev/null 2>&1; then
     ok "Caddy's root certificate saved as $KIT_DIR/caddy-root.crt: install it on NOC PCs, or use IOH certificates (see the guide)"
   fi
   info "Each name must point at this server in DNS (or the hosts file of your PC while testing), or be a route of a Cloudflare Tunnel (environments/cloudflare-tunnel.md)."
+}
+
+acme_missing() {  # the names that do not yet answer with a certificate this server trusts
+  local t missing=""
+  for t in $PROXY_NAMES; do
+    curl -s --noproxy '*' -o /dev/null -m 10 --resolve "$t.$MSP_DOMAIN:443:127.0.0.1" "https://$t.$MSP_DOMAIN/" || missing="$missing $t.$MSP_DOMAIN"
+  done
+  printf '%s' "${missing# }"
+}
+acme_wait() {  # wait until Caddy has a Let's Encrypt certificate for every name
+  local waited=0 missing
+  printf "  ....   waiting for certificates from Let's Encrypt (1 to 3 minutes) "
+  until missing=$(acme_missing) && [ -z "$missing" ]; do
+    sleep 5
+    waited=$((waited + 5))
+    printf '.'
+    if [ "$waited" -ge 600 ]; then
+      printf '\n'
+      docker compose logs --tail 400 proxy 2>&1 | grep -iE 'acme|challenge|obtain|rate.?limit' | tail -n 4 | cut -c1-400 | sed 's/^/         /'
+      fail "no certificate after 10 minutes for: $missing" \
+        "Let's Encrypt must reach this server from the Internet on ports 80 and 443 (the cloud firewall or the provider's panel), at the address in DNS (./scripts/install.sh dns); then ./scripts/install.sh proxy again"
+    fi
+  done
+  printf ' ready after %ss\n' "$waited"
+  ok "every name has its certificate from Let's Encrypt; Caddy renews them by itself"
+}
+
+public_address() {  # this server's address on the Internet: PUBLIC_ADDRESS in .env, or else found out
+  if [ -n "${PUBLIC_ADDRESS:-}" ]; then printf '%s' "$PUBLIC_ADDRESS"; return 0; fi
+  local a
+  # A VPS usually has it on its own network card; in Google Cloud and AWS the cloud's network adds it,
+  # so ask from outside.
+  a=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") {print $(i + 1); exit}}' || true)
+  if ! is_internet_address "$a"; then
+    a=$(curl -fsS -m 15 https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]' || true)
+  fi
+  if is_internet_address "$a"; then printf '%s' "$a"; fi
+}
+is_internet_address() { [ -n "${1:-}" ] && python3 -c 'import ipaddress, sys; a = ipaddress.ip_address(sys.argv[1]); sys.exit(0 if a.version == 4 and a.is_global else 1)' "$1" 2>/dev/null; }
+
+dns_check() {  # dns_check MINUTES: every name under the domain points at this server only; waits up to MINUTES
+  local address
+  address=$(public_address)
+  [ -n "$address" ] || fail "this server's address on the Internet could not be found out" \
+    "./scripts/install.sh settings --public-address <the server's public IPv4 address>"
+  # shellcheck disable=SC2086  # the names are separate arguments
+  python3 - "$address" "$1" "$MSP_DOMAIN" $PROXY_NAMES <<'PY'
+import ipaddress, socket, subprocess, sys, time
+address, minutes, domain, names = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4:]
+# Cloudflare's own addresses (cloudflare.com/ips): a record with Cloudflare's proxy on answers with these.
+CLOUDFLARE = [ipaddress.ip_network(n) for n in (
+    "173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 "
+    "190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 "
+    "104.24.0.0/14 172.64.0.0/13 131.0.72.0/22").split()]
+
+def lookup(host):
+    try:
+        return sorted({a[4][0] for a in socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM)})
+    except (socket.gaierror, UnicodeError):
+        return []
+
+def show(rows):
+    for host, got in rows:
+        if got == [address]:
+            print(f"  OK     {host} -> {address}")
+        elif not got:
+            print(f"  ....   {host}: no address yet")
+        elif any(ipaddress.ip_address(g) in net for g in got for net in CLOUDFLARE):
+            print(f"  ....   {host} -> {' '.join(got)}: Cloudflare's proxy is on for it; set the record to DNS only")
+        elif address in got:
+            print(f"  ....   {host} also points at {' '.join(g for g in got if g != address)}: remove that record")
+        else:
+            print(f"  ....   {host} -> {' '.join(got)}, not {address}")
+
+print(f"         this server's address on the Internet: {address}")
+deadline = time.time() + minutes * 60
+started = time.time()
+told = 0.0
+while True:
+    rows = [(f"{n}.{domain}", lookup(f"{n}.{domain}")) for n in names]
+    wrong = [host for host, got in rows if got != [address]]
+    if not wrong:
+        show(rows)
+        sys.exit(0)
+    now = time.time()
+    if now >= deadline:
+        show(rows)
+        print(f"         Needed at your DNS provider: *.{domain}  A  {address}  (one record for every name),")
+        print(f"         or an A record with {address} for each name above.")
+        sys.exit(1)
+    if told == 0.0:
+        show(rows)
+        print(f"         Create at your DNS provider: *.{domain}  A  {address}  (or one A record per name).")
+        print(f"         Waiting for DNS, up to {minutes} minutes; checking every 30 seconds.", flush=True)
+        told = now
+    elif now - told >= 300:
+        print(f"  ....   still waiting ({int((now - started) / 60)} minutes): {len(wrong)} of {len(names)} names "
+              f"do not point at {address} yet, for example {wrong[0]}", flush=True)
+        told = now
+    time.sleep(30)
+    # The server's own DNS cache would keep an old answer: empty it, where sudo needs no password.
+    subprocess.run(["sudo", "-n", "resolvectl", "flush-caches"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+PY
+}
+
+stage_dns() {  # dns [--wait MINUTES]: does every name point at this server? (direct access)
+  step "DNS: every name points at this server"
+  load_env
+  local minutes=0
+  case "${1:-}" in
+    "") ;;
+    --wait) minutes=${2:-60} ;;
+    *) fail "unknown option '$1' for dns" "./scripts/install.sh dns, or dns --wait <minutes>" ;;
+  esac
+  [[ "$minutes" =~ ^[0-9]+$ ]] || fail "--wait takes a number of minutes" "./scripts/install.sh dns --wait 60"
+  [ "${MSP_DOMAIN:-msp.example.internal}" != msp.example.internal ] || fail "MSP_DOMAIN is still the example" "./scripts/install.sh settings --domain <your domain>"
+  dns_check "$minutes" || fail "not every name points at this server yet" \
+    "create the records shown above at your DNS provider (on Cloudflare: DNS only, the grey cloud), wait a few minutes, then ./scripts/install.sh dns again"
+  ok "every name points at this server: Let's Encrypt can check them"
 }
 
 stage_grafana() {
@@ -858,7 +1118,11 @@ SQL
   fi
   info "More staff: docker compose exec msp-glue mspctl staff add <e-mail> --name \"<full name>\" --role engineer"
   info "Roles: manager (service view), engineer (operations and actions), automation (engineer plus playbooks), admin (all three)"
-  info "Next: ./scripts/install.sh console"
+  if [ "${WAY_IN:-}" = direct ] && [ "${STAFF_GATE:-off}" != keycloak ]; then
+    info "Next: ./scripts/install.sh gate (direct access: the sign-in gate before anything goes public)"
+  else
+    info "Next: ./scripts/install.sh console"
+  fi
 }
 
 stage_console() {
@@ -883,6 +1147,8 @@ stage_console() {
     code=$(https_code "console.$MSP_DOMAIN" /healthz)
     case "$code" in
       200) ok "https://console.$MSP_DOMAIN answers" ;;
+      302) [ "${STAFF_GATE:-off}" = keycloak ] || fail "https://console.$MSP_DOMAIN gave '$code'" "docker compose logs --tail 30 proxy msp-console"
+           ok "https://console.$MSP_DOMAIN answers (302: the sign-in gate asks who it is first)" ;;
       403) ok "https://console.$MSP_DOMAIN answers (403 here: this server is outside ADMIN_NETWORKS, as intended)" ;;
       *) fail "https://console.$MSP_DOMAIN gave '$code'" "docker compose logs --tail 30 proxy msp-console" ;;
     esac
@@ -899,6 +1165,93 @@ stage_console() {
   fi
   info "Open https://console.$MSP_DOMAIN and sign in with a staff account (./scripts/install.sh sso --admin-email <e-mail> makes the first)."
   info "Browsers need console.$MSP_DOMAIN and sso.$MSP_DOMAIN in DNS (or as routes of the Cloudflare tunnel)."
+}
+
+stage_gate() {  # gate [off]: the sign-in gate in front of the engineers' tools (oauth2-proxy with Keycloak)
+  step "Sign-in gate in front of the engineers' tools (oauth2-proxy with Keycloak)"
+  load_env
+  if [ "${1:-}" = off ]; then
+    [ "${WAY_IN:-}" != direct ] || fail "with direct access the gate stays on: it is what keeps the engineers' tools private" \
+      "to change the way in: ./scripts/install.sh settings --way-in cloudflare (or ioh); environments/direct-access.md"
+    set_env STAFF_GATE off
+    load_env
+    if is_done proxy; then dc_up proxy || fail "the reverse proxy did not restart" "docker compose logs --tail 30 proxy"; fi
+    dc stop oauth2-proxy >/dev/null 2>&1 || true
+    remove_profile gate
+    ok "the sign-in gate is off: ADMIN_NETWORKS alone decides who reaches the engineers' tools"
+    return 0
+  fi
+  [ -z "${1:-}" ] || fail "unknown option '$1' for gate" "./scripts/install.sh gate, or gate off"
+  [ "${MSP_DOMAIN:-msp.example.internal}" != msp.example.internal ] || fail "MSP_DOMAIN is still the example" "./scripts/install.sh settings --domain <your domain>"
+  health_is keycloak healthy || fail "single sign-on (Keycloak) is not running" "./scripts/install.sh sso"
+  docker image inspect "$GLUE_TAG" >/dev/null 2>&1 || fail "the msp-glue image $GLUE_TAG is missing (new kit version)" "./scripts/install.sh images"
+  ensure_secret KEYCLOAK_GATE_CLIENT_SECRET
+  ensure_secret GATE_COOKIE_SECRET 32   # 32 characters: the key of the gate's cookie
+  if [ -z "${GATE_IMAGE:-}" ]; then
+    set_env GATE_IMAGE "$(sed -n 's/^GATE_IMAGE=//p' .env.example)"
+    load_env
+  fi
+  ok "the gate's client secret and cookie key are in .env"
+
+  local out
+  if ! out=$(docker run --rm -i --network msp -e KEYCLOAK_ADMIN_PASSWORD -e KEYCLOAK_GATE_CLIENT_SECRET -e MSP_DOMAIN \
+      --entrypoint python "$GLUE_TAG" - < scripts/sso-gate.py 2>&1); then
+    printf '%s\n' "$out" | tail -n 5
+    fail "the gate's client could not be set up in Keycloak" \
+      "if you changed Keycloak's admin password by hand, write it into KEYCLOAK_ADMIN_PASSWORD in .env; then ./scripts/install.sh gate"
+  fi
+  printf '%s\n' "$out" | sed 's/^/  OK     Keycloak: /'
+
+  add_profile gate
+  docker pull -q "$GATE_IMAGE" >/dev/null 2>&1 || docker image inspect "$GATE_IMAGE" >/dev/null 2>&1 ||
+    fail "the gate's image $GATE_IMAGE could not be downloaded" "the Docker service needs HTTPS access to quay.io"
+  dc_up oauth2-proxy || fail "the sign-in gate did not start" "docker compose logs --tail 30 oauth2-proxy"
+  wait_for "the sign-in gate" 120 "docker compose logs --tail 30 oauth2-proxy" health_is oauth2-proxy healthy
+  set_env STAFF_GATE keycloak
+  load_env
+  ok "the gate runs, and Caddy puts it in front of the engineers' tools (STAFF_GATE=keycloak in .env)"
+  if is_done proxy; then
+    dc_up proxy || fail "the reverse proxy did not restart" "docker compose logs --tail 30 proxy"
+    wait_for "Caddy" 120 "docker compose logs --tail 50 proxy" health_is proxy running
+    sleep 2
+    gate_check
+  else
+    info "The reverse proxy is not on yet: ./scripts/install.sh proxy starts it with the gate in front."
+  fi
+  info "Staff sign in once a day at the gate, with their Keycloak account; customers reach GLPI and Grafana without it."
+}
+
+gate_check() {  # what a browser goes through: a tool -> the gate's sign-in -> Keycloak's sign-in page
+  local host="nautobot.$MSP_DOMAIN" out code where
+  out=$(curl -sk --noproxy '*' -o /dev/null -m 20 -w '%{http_code} %{redirect_url}' --resolve "$host:443:127.0.0.1" "https://$host/" || true)
+  code=${out%% *}
+  where=${out#* }
+  case "$code" in
+    403) warn "the gate cannot be checked from this server, which is outside ADMIN_NETWORKS" \
+           "open https://$host on an engineer's PC: Keycloak's sign-in page should appear"
+         return 0 ;;
+    302) [[ "$where" == "https://$host/oauth2/sign_in?"* ]] ||
+           fail "https://$host sends browsers to '$where' instead of the gate's sign-in" "docker compose logs --tail 30 proxy oauth2-proxy" ;;
+    *) fail "https://$host gave '$code' instead of asking browsers to sign in" "docker compose logs --tail 30 proxy oauth2-proxy" ;;
+  esac
+  out=$(curl -sk --noproxy '*' -o /dev/null -m 20 -w '%{http_code} %{redirect_url}' --resolve "$host:443:127.0.0.1" "$where" || true)
+  code=${out%% *}
+  where=${out#* }
+  case "$where" in
+    "https://sso.$MSP_DOMAIN/realms/msp/protocol/openid-connect/auth?"*client_id=msp-gate*) ;;
+    *) fail "the gate's sign-in did not lead to Keycloak (answer $code, to '$where')" "docker compose logs --tail 30 oauth2-proxy" ;;
+  esac
+  out=$(curl -sk --noproxy '*' -o /dev/null -m 20 -w '%{http_code} %{redirect_url}' --resolve "sso.$MSP_DOMAIN:443:127.0.0.1" "$where" || true)
+  code=${out%% *}
+  where=${out#* }
+  case "$code" in
+    200) ok "a browser on https://$host goes to the gate, and the gate to Keycloak's sign-in page" ;;
+    400) fail "Keycloak refused the gate's sign-in (its client msp-gate, or the address it returns to)" "./scripts/install.sh gate sets the client up again" ;;
+    302) # Keycloak sends the browser back with its reason: error=...&error_description=...
+         fail "Keycloak refused the gate's sign-in: $(printf '%s' "$where" | sed -n 's/.*error_description=\([^&]*\).*/\1/p' | sed 's/+/ /g; s/%3A/:/g')" \
+           "docker compose logs --tail 30 keycloak oauth2-proxy" ;;
+    *) fail "Keycloak's sign-in page gave '$code'" "docker compose logs --tail 30 keycloak" ;;
+  esac
 }
 
 SSO_TOOL_NAMES="grafana forgejo nautobot semaphore zabbix"
@@ -1396,20 +1749,19 @@ stage_certs() {  # certs <fullchain.pem> <privkey.pem>, or certs internal
 }
 
 # ======================================================================= driver
-usage() { sed -n '3,31p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,38p' "$0" | sed 's/^# \{0,1\}//'; }
 
 show_status() {
   step "Installation status ($KIT_DIR)"
-  local s tls
+  local s
   for s in "${ALL_STAGES[@]}"; do
     if is_done "$s"; then printf '  %sdone%s   %-14s %s\n' "$G" "$N" "$s" "$(grep -- "^$s"$'\t' "$STATE_FILE" | cut -f2)"
     else printf '  ....   %s\n' "$s"; fi
   done
-  if is_done proxy; then
-    tls=$( (load_env; echo "${CADDY_TLS:-internal}") )
-    if [ "$tls" = internal ]; then info "certificates: Caddy's own (IOH certificates: ./scripts/install.sh certs <fullchain.pem> <privkey.pem>)"
-    else info "certificates: IOH certificates in components/proxy/certs"; fi
-  fi
+  ( load_env
+    info "way in: $(way_in_text)"
+    info "sign-in gate: ${STAFF_GATE:-off}"
+    if is_done proxy; then info "certificates: $(certificates_text)"; fi )
 }
 
 run_stage() {
@@ -1432,7 +1784,11 @@ run_all() {
     run_stage "$s"
   done
   step "Core installation complete"
-  info "Next: ./scripts/install.sh proxy   (HTTPS on https://<tool>.$( (load_env; echo "$MSP_DOMAIN") ), once the DNS names exist)"
+  if [ "$( (load_env; echo "${WAY_IN:-}") )" = direct ]; then
+    info "Next (direct access): ./scripts/install.sh sso --admin-email <e-mail> --name \"<full name>\", then gate, then proxy"
+  else
+    info "Next: ./scripts/install.sh proxy   (HTTPS on https://<tool>.$( (load_env; echo "$MSP_DOMAIN") ), once the DNS names exist)"
+  fi
   info "Then: change nothing else by hand; onboard the first customer as the guide shows."
 }
 
@@ -1450,6 +1806,24 @@ main() {
     preflight | settings | network | images | start | glpi-api | forgejo-admin | tokens | platform | glue | harden | check | proxy | grafana | sso | console | sso-tools)
       shift
       run_stage "$cmd" "$@"
+      ;;
+    gate)
+      shift
+      if [ "${1:-}" = off ]; then
+        CURRENT_STAGE=gate
+        stage_gate off
+        unmark gate
+        CURRENT_STAGE=""
+      else
+        run_stage gate "$@"
+      fi
+      ;;
+    dns)
+      # A check, not a stage: direct access only.
+      shift
+      CURRENT_STAGE=dns
+      stage_dns "$@"
+      CURRENT_STAGE=""
       ;;
     chat)
       shift

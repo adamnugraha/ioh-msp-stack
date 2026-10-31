@@ -1,8 +1,9 @@
 # Google Cloud
 
 One Compute Engine virtual machine in Jakarta (`asia-southeast2`), in a network of its own where
-only SSH through Google's Identity-Aware Proxy (IAP) gets in. Browsers reach the tools through a
-Cloudflare Tunnel. Use it for trials, with the sample customers or IOH's own test equipment:
+only SSH through Google's Identity-Aware Proxy (IAP) gets in, and with direct access the web on ports
+80 and 443. Browsers reach the tools through a Cloudflare Tunnel, or straight from the Internet without
+Cloudflare ([../direct-access.md](../direct-access.md)). Use it for trials, with the sample customers or IOH's own test equipment:
 customers' data belongs on IOH's servers unless IOH approves otherwise.
 
 **Cost** (Google's list prices in October 2026; check the current ones in the pricing calculator):
@@ -13,9 +14,9 @@ no automatic charge when it ends.
 
 ## Automatic install
 
-The whole platform in one command, after the Cloudflare side is ready (once per domain:
-[../cloudflare-tunnel.md](../cloudflare-tunnel.md), sections 3 and 4; keep the tunnel's token). In
-Cloud Shell, with the kit there (step 2 below):
+The whole platform in one command. With a Cloudflare Tunnel, prepare the Cloudflare side first (once
+per domain: [../cloudflare-tunnel.md](../cloudflare-tunnel.md), sections 3 and 4; keep the tunnel's
+token). In Cloud Shell, with the kit there (step 2 below):
 
 ```bash
 cd ~/ioh-msp-stack
@@ -23,6 +24,11 @@ cp environments/autoinstall.conf.example ~/msp.conf && chmod 600 ~/msp.conf
 nano ~/msp.conf          # DOMAIN, STAFF_EMAIL, STAFF_NAME, CLOUDFLARE_TUNNEL_TOKEN
 ./environments/gcp/create.sh --project <project ID> --autoinstall ~/msp.conf
 ```
+
+**Without Cloudflare:** `WAY_IN=direct` in `~/msp.conf` and no token. `create.sh` then also reserves
+the fixed address `msp-test-01-ip`, opens ports 80 and 443, and ends with the DNS record to create at
+your DNS provider (`*.<domain>  A  <the address>`): create it right away, since the install waits for it
+before HTTPS ([../direct-access.md](../direct-access.md)).
 
 The machine installs everything by itself in 40 to 75 minutes. How far it is, and once finished the
 first sign-in:
@@ -33,7 +39,8 @@ gcloud compute ssh msp-test-01 --project <project ID> --zone asia-southeast2-a -
 ```
 
 Rebuild later with the same file: `./environments/gcp/delete.sh --project <project ID> --yes`, then
-the same `create.sh` command. Cloud Shell keeps `~/msp.conf` between sessions. The steps below do
+the same `create.sh` command. The delete script keeps `msp-test-01-ip`, so a DNS record for direct
+access stays right. Cloud Shell keeps `~/msp.conf` between sessions. The steps below do
 the same by hand.
 
 ## Steps
@@ -46,7 +53,7 @@ the same by hand.
    `gcloud` is ready and signed in. Get the kit there, only to run its scripts:
 
    ```bash
-   curl -fL -o kit.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.4.0.zip
+   curl -fL -o kit.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.5.0.zip
    unzip -q kit.zip && cd ioh-msp-stack
    ```
 
@@ -58,10 +65,11 @@ the same by hand.
 
    It switches on Compute Engine, creates the network `msp-net` (subnet 10.200.0.0/24 in
    Jakarta) with one firewall rule (SSH from IAP's range 35.235.240.0/20), and the virtual machine
-   `msp-test-01`: e2-standard-4, Ubuntu 24.04, a 100 GB balanced disk. `--dry-run` shows the
-   commands without running them, and `--help` lists the options: another size, plain SSH from your
-   own client (Termix, PuTTY) with `--ssh-from` and `--public-key`, or port 10051 for collectors.
-   Running it again is safe.
+   `msp-test-01`: e2-standard-4, Ubuntu 24.04, a 100 GB balanced disk. For direct access, add
+   `--way-in direct`: the fixed address `msp-test-01-ip` and the rule `msp-net-web` (ports 80 and
+   443) come with it. `--dry-run` shows the commands without running them, and `--help` lists the
+   options: another size, plain SSH from your own client (Termix, PuTTY) with `--ssh-from` and
+   `--public-key`, or port 10051 for collectors. Running it again is safe.
 
 4. **Connect.** The first time, gcloud makes an SSH key; press Enter at its questions.
 
@@ -72,7 +80,7 @@ the same by hand.
 5. **Prepare the server.** On the server, as your own account:
 
    ```bash
-   curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.4.0.zip
+   curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.5.0.zip
    sha256sum /tmp/ioh-msp-stack.zip      # must equal the line for this file in dist/SHA256SUMS
    command -v unzip >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y unzip)
    sudo mkdir -p /opt/ioh-msp-stack && sudo chown "$(id -un):" /opt/ioh-msp-stack
@@ -82,11 +90,13 @@ the same by hand.
    sudo ./scripts/prepare-server.sh --no-firewall --pool 172.31.0.0/16 --tz Asia/Jakarta
    ```
 
-   `--no-firewall` leaves the server's own firewall off: the network's firewall rule in front of it
-   lets in nothing but SSH through IAP. Then type `exit` and connect again (step 4), so your account's
+   `--no-firewall` leaves the server's own firewall off: the network's firewall rules in front of it
+   let in nothing but SSH through IAP (and, with direct access, ports 80 and 443). Then type `exit` and connect again (step 4), so your account's
    docker group applies.
 
-6. **Install.**
+6. **Install.** With direct access, follow [../direct-access.md](../direct-access.md), section 3,
+   instead of steps 6 to 8: the same stages, in the order that puts the sign-in gate first. With the
+   Cloudflare Tunnel:
 
    ```bash
    cd /opt/ioh-msp-stack
@@ -123,7 +133,8 @@ gcloud compute instances stop msp-test-01 --zone asia-southeast2-a --project <pr
 gcloud compute instances start msp-test-01 --zone asia-southeast2-a --project <project ID>
 ```
 
-Every container starts again with the machine, and the tunnel reconnects by itself.
+Every container starts again with the machine, and the tunnel reconnects by itself. With direct
+access the address stays the same.
 
 - **E-mail.** Google Cloud blocks outgoing port 25. GLPI's notifications and `./scripts/install.sh chat
   email` need a mail service on port 587 or 465.
@@ -131,8 +142,8 @@ Every container starts again with the machine, and the tunnel reconnects by itse
   `create.sh` again with `--collectors-from "<collector address>/32"` (and keep that option in every
   later run: the firewall rules follow the options given), then on the server
   `./scripts/install.sh settings --collectors-listen 0.0.0.0` and `docker compose up -d zabbix-server`.
-  The collector's `ZBX_SERVER_HOST` is the machine's external address. That address changes when the
-  machine stops and starts, so keep it:
+  The collector's `ZBX_SERVER_HOST` is the machine's external address. With a tunnel, that address
+  changes when the machine stops and starts, so keep it (direct access keeps it already):
   `gcloud compute addresses create msp-test-01-ip --addresses <its address> --region asia-southeast2 --project <project ID>`.
 - **Backups.** `sudo ./scripts/backup.sh` works as everywhere; copy `/var/backups/msp` off the server
   (Cloud Storage, for example) if the trial data matters.
@@ -145,7 +156,8 @@ In Cloud Shell, from the kit folder:
 ./environments/gcp/delete.sh --project <project ID>
 ```
 
-It deletes the virtual machine with its disk, the address kept for it (`msp-test-01-ip`, when there is
-one), the firewall rules and the network. The Cloudflare side stays for a rebuild; when the trial is
-over, delete the tunnel (Networking, Tunnels) and the Access application (Zero Trust, Access) too, and
-the project itself if nothing else uses it.
+It deletes the virtual machine with its disk, the firewall rules and the network. The address kept for
+it (`msp-test-01-ip`, when there is one) stays for a rebuild: add `--release-address` when the trial is
+over, and delete its DNS record. The Cloudflare side stays for a rebuild too; when the trial is over,
+delete the tunnel (Networking, Tunnels) and the Access application (Zero Trust, Access), and the
+project itself if nothing else uses it.
