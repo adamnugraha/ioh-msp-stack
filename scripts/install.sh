@@ -1624,8 +1624,13 @@ PY
     cp edge-collector/compose.yaml "$edge/compose.yaml"
     printf 'ZBX_HOSTNAME=proxy-bankx-01\nZBX_SERVER_HOST=zabbix-server\nZBX_TLSPSKIDENTITY=psk-proxy-bankx-01\nZABBIX_IMAGE_TAG=%s\n' \
       "$ZABBIX_IMAGE_TAG" > "$edge/.env"
+    # The key stays private (600) and belongs to the one account that reads it: the collector's own
+    # user in Zabbix's image (zabbix, 1997:1995). Changing an owner needs root, so a short container
+    # does it, as for Grafana's plugin. With the kit account's 640, the collector could not read it.
     ( umask 077; printf '%s\n' "$psk" > "$edge/zabbix_proxy.psk" )
-    chmod 640 "$edge/zabbix_proxy.psk"
+    docker run --rm --user 0 --entrypoint sh -v "$KIT_DIR/$edge:/edge" "$GLUE_TAG" \
+      -c 'chown 1997:1995 /edge/zabbix_proxy.psk && chmod 600 /edge/zabbix_proxy.psk' >/dev/null ||
+      fail "the edge collector's key file could not be handed to the collector's user" "docker info shows whether Docker runs; then the same command again"
   fi
   if ! out=$(docker compose -p msp-lab-edge-bankx -f "$edge/compose.yaml" -f lab/compose.edge-lab.yaml up -d 2>&1); then
     printf '%s\n' "$out" | tail -n 15
