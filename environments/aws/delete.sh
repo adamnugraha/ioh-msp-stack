@@ -2,31 +2,34 @@
 # =============================================================================
 # Remove what environments/aws/create.sh made: the instance with its disk, its security group and
 # its key pair. Everything on the server is lost; back up first if anything there matters
-# (sudo ./scripts/backup.sh, then copy /var/backups/msp off the server).
+# (sudo ./scripts/backup.sh, then copy /var/backups/msp off the server). The Elastic IP (NAME-ip,
+# direct access) stays for a rebuild, so its DNS record stays right; --release-address releases it too.
 #
 #   ./environments/aws/delete.sh
 #
 # Options:
-#   --region REGION   default ap-southeast-3
-#   --name NAME       default msp-test-01
-#   --yes             do not ask to type the name first
+#   --region REGION      default ap-southeast-3
+#   --name NAME          default msp-test-01
+#   --release-address    release the Elastic IP NAME-ip as well (when the trial is over)
+#   --yes                do not ask to type the name first
 # =============================================================================
 set -euo pipefail
 export AWS_PAGER=""
 
-REGION=ap-southeast-3 NAME=msp-test-01 YES=0
+REGION=ap-southeast-3 NAME=msp-test-01 YES=0 RELEASE=0
 
 if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; R=$'\033[31m'; N=$'\033[0m'; else B=; G=; R=; N=; fi
 step() { printf '\n%s== %s%s\n' "$B" "$*" "$N"; }
 ok()   { printf '  %sOK%s     %s\n' "$G" "$N" "$*"; }
 info() { printf '         %s\n' "$*"; }
 fail() { printf '\n  %sSTOPPED%s %s\n' "$R" "$N" "$1"; [ -n "${2:-}" ] && printf '  Fix:    %s\n' "$2"; exit 1; }
-usage() { sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,15p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --region) REGION=${2:-}; shift 2 ;;
     --name) NAME=${2:-}; shift 2 ;;
+    --release-address) RELEASE=1; shift ;;
     --yes) YES=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) fail "unknown option '$1'" "./environments/aws/delete.sh --help lists the options" ;;
@@ -68,5 +71,17 @@ if [ -n "$(q ec2 describe-key-pairs --key-names "$NAME" --query 'KeyPairs[0].Key
   # Its private key here is useless now, and create.sh makes a new one under the same name.
   if [ -f "$NAME.pem" ]; then rm -f "$NAME.pem"; ok "$NAME.pem in this folder deleted"; fi
 fi
-info "The Cloudflare tunnel, its routes and Cloudflare Access stay in Cloudflare: a rebuild (create.sh"
-info "again) uses them as they are. To remove them too: Networking, Tunnels, and Zero Trust, Access."
+# The Elastic IP (direct access): free again once its instance is gone; kept for a rebuild unless asked.
+read -r alloc eip <<<"$(q ec2 describe-addresses --filters "Name=tag:Name,Values=$NAME-ip" --query 'Addresses[0].[AllocationId,PublicIp]')" || true
+if [ -n "${alloc:-}" ]; then
+  if [ "$RELEASE" = 1 ]; then
+    aws ec2 release-address --allocation-id "$alloc" --region "$REGION"
+    ok "Elastic IP $NAME-ip ($eip) released: delete its DNS records too"
+  else
+    ok "Elastic IP $NAME-ip ($eip) kept for a rebuild (about US\$3.60 a month)"
+    info "When the trial is over: the same command with --release-address releases it."
+  fi
+fi
+info "With a Cloudflare Tunnel, the tunnel, its routes and Cloudflare Access stay in Cloudflare: a rebuild"
+info "(create.sh again) uses them as they are. To remove them too: Networking, Tunnels, and Zero Trust, Access."
+info "With direct access, the DNS records stay at your DNS provider, pointing at the kept Elastic IP."

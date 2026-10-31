@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
 # Create the platform's server on Google Cloud: one Ubuntu 24.04 virtual machine in a network of its
-# own, where only SSH through Google's Identity-Aware Proxy (IAP) gets in. Run it in Cloud Shell
-# (console.cloud.google.com, the >_ button), where gcloud is ready, or on a PC with the gcloud CLI.
+# own, where only SSH through Google's Identity-Aware Proxy (IAP) gets in, and with direct access the
+# web on ports 80 and 443. Run it in Cloud Shell (console.cloud.google.com, the >_ button), where gcloud
+# is ready, or on a PC with the gcloud CLI.
 #
 #   ./environments/gcp/create.sh --project <project ID>
 #
@@ -20,16 +21,20 @@
 #   --collectors-from "CIDR ..."  open port 10051 to collectors at these addresses
 #   --autoinstall FILE    the machine then installs the whole platform by itself, with the settings
 #                         in FILE (environments/autoinstall.conf.example); 40 to 75 minutes
+#   --way-in WAY          cloudflare (a Cloudflare Tunnel, no web port open) or direct (ports 80 and
+#                         443 open, a fixed address NAME-ip); default: WAY_IN in the settings file,
+#                         else cloudflare
 #   --dry-run             print the gcloud commands without running them
 #
 # Running it again is safe: what exists is kept, and the firewall rules follow the options given.
-# ./environments/gcp/delete.sh removes everything this script created.
+# ./environments/gcp/delete.sh removes everything this script created (the address NAME-ip only with
+# --release-address, so a rebuild keeps it and its DNS record).
 # =============================================================================
 set -euo pipefail
 export CLOUDSDK_CORE_DISABLE_PROMPTS=1
 
 PROJECT="" NAME=msp-test-01 ZONE=asia-southeast2-a MACHINE=e2-standard-4 DISK=100 RANGE=10.200.0.0/24
-SSH_FROM="" PUBKEY="" LINUX_USER=${USER:-$(id -un)} COLLECTORS="" AUTOCONF="" DRY=0
+SSH_FROM="" PUBKEY="" LINUX_USER=${USER:-$(id -un)} COLLECTORS="" AUTOCONF="" WAYIN="" DRY=0
 NETWORK=msp-net TAG=msp-platform IAP_RANGE=35.235.240.0/20
 
 if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; R=$'\033[31m'; N=$'\033[0m'; else B=; G=; R=; N=; fi
@@ -37,7 +42,7 @@ step() { printf '\n%s== %s%s\n' "$B" "$*" "$N"; }
 ok()   { printf '  %sOK%s     %s\n' "$G" "$N" "$*"; }
 info() { printf '         %s\n' "$*"; }
 fail() { printf '\n  %sSTOPPED%s %s\n' "$R" "$N" "$1"; [ -n "${2:-}" ] && printf '  Fix:    %s\n' "$2"; exit 1; }
-usage() { sed -n '3,26p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,31p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -52,6 +57,7 @@ while [ $# -gt 0 ]; do
     --user) LINUX_USER=${2:-}; shift 2 ;;
     --collectors-from) COLLECTORS=${2:-}; shift 2 ;;
     --autoinstall) AUTOCONF=${2:-}; shift 2 ;;
+    --way-in) WAYIN=${2:-}; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) fail "unknown option '$1'" "./environments/gcp/create.sh --help lists the options" ;;
@@ -99,12 +105,27 @@ if [ -n "$SSH_FROM" ]; then
 fi
 REGION=${ZONE%-*}
 SUBNET="$NETWORK-$REGION"
+# The way in: --way-in, else the settings file's WAY_IN, else the Cloudflare Tunnel.
+KIT=$(cd "$(dirname "$0")/../.." && pwd)
+OVERRIDE=()
+case "$WAYIN" in
+  "") ;;
+  cloudflare | direct) OVERRIDE=("WAY_IN=$WAYIN") ;;
+  *) fail "--way-in '$WAYIN': cloudflare or direct" "./environments/gcp/create.sh --help lists the options" ;;
+esac
+DOMAIN="<your domain>"
+if [ -n "$AUTOCONF" ]; then
+  WAYIN=$(python3 "$KIT/scripts/autoinstall-settings.py" "$AUTOCONF" ENVIRONMENT=gcp "${OVERRIDE[@]}" --get WAY_IN) ||
+    fail "the settings file $AUTOCONF is not ready (see above)" "correct it (environments/autoinstall.conf.example explains every value)"
+  DOMAIN=$(python3 "$KIT/scripts/autoinstall-settings.py" "$AUTOCONF" ENVIRONMENT=gcp --get DOMAIN)
+fi
+WAYIN=${WAYIN:-cloudflare}
 # The automatic install: the machine's startup script, made from the settings file.
 STARTUP=""
 if [ -n "$AUTOCONF" ]; then
   STARTUP=$(mktemp)
   trap 'rm -f "$STARTUP"' EXIT
-  "$(dirname "$0")/../bootstrap.sh" "$AUTOCONF" ENVIRONMENT=gcp > "$STARTUP" || exit 1   # it says what to correct
+  "$KIT/environments/bootstrap.sh" "$AUTOCONF" ENVIRONMENT=gcp "${OVERRIDE[@]}" > "$STARTUP" || exit 1   # it says what to correct
 fi
 
 run() {  # run ARGS...: gcloud ARGS, or only show it in a dry run
@@ -166,12 +187,50 @@ step "Firewall rules"
 rule "$NETWORK-ssh-iap" tcp:22 "$IAP_RANGE" "SSH through Identity-Aware Proxy"
 if [ -n "$SSH_FROM" ]; then rule "$NETWORK-ssh-direct" tcp:22 "$SSH_FROM" "SSH from your own client"; else drop_rule "$NETWORK-ssh-direct"; fi
 if [ -n "$COLLECTORS" ]; then rule "$NETWORK-collectors" tcp:10051 "$COLLECTORS" "collectors at customer sites"; else drop_rule "$NETWORK-collectors"; fi
-info "Nothing else gets in: browsers come through the Cloudflare Tunnel, which connects out."
+if [ "$WAYIN" = direct ]; then
+  rule "$NETWORK-web" tcp:80,tcp:443 "0.0.0.0/0" "browsers, and Let's Encrypt's checks on port 80"
+  info "Nothing else gets in. The sign-in gate on the server keeps the engineers' tools private."
+else
+  drop_rule "$NETWORK-web"
+  info "Nothing else gets in: browsers come through the Cloudflare Tunnel, which connects out."
+fi
+
+# ------------------------------------------------------------------ fixed address (direct access)
+FIXED=""
+if [ "$WAYIN" = direct ]; then
+  step "External address $NAME-ip (the same after a stop, a start or a rebuild)"
+  if exists compute addresses describe "$NAME-ip" --region "$REGION" --project "$PROJECT"; then
+    FIXED=$(gcloud compute addresses describe "$NAME-ip" --region "$REGION" --project "$PROJECT" --format='value(address)')
+    ok "address $NAME-ip exists: $FIXED"
+  elif exists compute instances describe "$NAME" --zone "$ZONE" --project "$PROJECT"; then
+    # The machine runs already with a passing address: keep that one, so nothing changes for it.
+    current=$(gcloud compute instances describe "$NAME" --zone "$ZONE" --project "$PROJECT" \
+      --format='value(networkInterfaces[0].accessConfigs[0].natIP)')
+    [ -n "$current" ] || fail "the virtual machine $NAME has no external address" "delete it (./environments/gcp/delete.sh) and run this command again"
+    run compute addresses create "$NAME-ip" --region "$REGION" --project "$PROJECT" --addresses "$current" --quiet
+    FIXED=$current
+    ok "the machine's address $FIXED is now kept as $NAME-ip"
+  else
+    run compute addresses create "$NAME-ip" --region "$REGION" --project "$PROJECT" --quiet
+    FIXED="<the reserved address>"
+    if [ "$DRY" = 0 ]; then
+      FIXED=$(gcloud compute addresses describe "$NAME-ip" --region "$REGION" --project "$PROJECT" --format='value(address)')
+    fi
+    ok "address $NAME-ip reserved: $FIXED"
+  fi
+fi
 
 # ------------------------------------------------------------------ virtual machine
 step "Virtual machine $NAME"
 if exists compute instances describe "$NAME" --zone "$ZONE" --project "$PROJECT"; then
   ok "virtual machine $NAME exists ($(gcloud compute instances describe "$NAME" --zone "$ZONE" --project "$PROJECT" --format='value(status)'))"
+  if [ "$WAYIN" = direct ] && [ "$DRY" = 0 ]; then
+    now=$(gcloud compute instances describe "$NAME" --zone "$ZONE" --project "$PROJECT" --format='value(networkInterfaces[0].accessConfigs[0].natIP)')
+    if [ "$now" != "$FIXED" ]; then
+      fail "the machine answers on $now, not on its kept address $FIXED" \
+        "delete it (./environments/gcp/delete.sh keeps $NAME-ip) and run this command again: the new machine gets $FIXED"
+    fi
+  fi
   if [ -n "$STARTUP" ]; then
     run compute instances add-metadata "$NAME" --zone "$ZONE" --project "$PROJECT" \
       --metadata-from-file "startup-script=$STARTUP" --quiet
@@ -184,6 +243,7 @@ else
         --image-family ubuntu-2404-lts-amd64 --image-project ubuntu-os-cloud
         --boot-disk-size "${DISK}GB" --boot-disk-type pd-balanced
         --network "$NETWORK" --subnet "$SUBNET" --tags "$TAG" --quiet)
+  if [ "$WAYIN" = direct ]; then args+=(--address "$NAME-ip"); fi
   if [ -n "$STARTUP" ]; then args+=(--metadata-from-file "startup-script=$STARTUP"); fi
   if ! run "${args[@]}"; then
     fail "the virtual machine was not created (Google's reason is above)" \
@@ -213,6 +273,14 @@ step "Next"
 info "Connect (the first time gcloud makes an SSH key; press Enter at its questions):"
 info "  gcloud compute ssh $NAME --project $PROJECT --zone $ZONE --tunnel-through-iap"
 if [ -n "$SSH_FROM" ]; then info "or from your own client:  ssh $LINUX_USER@$ADDRESS"; fi
+if [ "$WAYIN" = direct ]; then
+  info ""
+  info "DNS, now: at your DNS provider, point every name under the domain at $FIXED. One record does it:"
+  info "  *.$DOMAIN   A   $FIXED       (on Cloudflare: DNS only, the grey cloud)"
+  info "The install waits for it before Let's Encrypt is asked for certificates. The address stays the"
+  info "machine's for good: delete.sh keeps it for a rebuild, so the record stays right."
+  info ""
+fi
 if [ -n "$AUTOCONF" ]; then
   info "The machine installs the platform by itself, 40 to 75 minutes. How far it is, any time:"
   info "  gcloud compute ssh $NAME --project $PROJECT --zone $ZONE --tunnel-through-iap --command 'sudo /opt/ioh-msp-stack/scripts/autoinstall.sh status'"

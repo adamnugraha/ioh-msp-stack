@@ -80,6 +80,7 @@ components/                  one compose file per tool, so tools can be split ac
   zabbix/ glpi/ semaphore/ forgejo/ glue/
   proxy/                     Caddy reverse proxy with TLS and network access rules (profile "proxy")
   keycloak/                  single sign-on for staff (profile "sso")
+  gate/                      the sign-in gate for direct access, oauth2-proxy (profile "gate")
   versus/                    chat alerts: settings and message templates (profile "chat")
   grafana/                   phase 3 (profile "grafana")
 edge-collector/              Zabbix proxy for a customer site (pre-shared key, outbound only)
@@ -95,13 +96,14 @@ semaphore/playbooks/         starter content of the shared playbook Git reposito
 grafana/                     customer dashboard template
 scripts/                     prepare-server.sh (Docker, address pool, firewall), install.sh (the installer),
                              autoinstall.sh (everything at once, unattended) and its settings reader,
-                             add-customer-secrets.sh, gen-env.sh, backup.sh, build-mediatype.py
+                             sso-gate.py (the gate's Keycloak client), add-customer-secrets.sh, gen-env.sh,
+                             backup.sh, build-mediatype.py
 tenants/README.md            how customer secrets are stored (in secrets/, never in Git)
 lab/                         simulated devices, sample data, run-lab.sh and check.py (the sample
                              customers of install.sh samples come from here too)
 environments/                where the server runs: Google Cloud and AWS (a script creates the server),
-                             a VPS, IOH's private cloud; the Cloudflare Tunnel as the way in outside IOH;
-                             the automatic install's settings file and bootstrap.sh
+                             a VPS, IOH's private cloud; the two ways in outside IOH (a Cloudflare Tunnel,
+                             or direct access); the automatic install's settings file and bootstrap.sh
 VERSION                      the kit's version
 ```
 
@@ -158,7 +160,7 @@ from an empty server to the first customer, with your own values filled in.
 This section describes a server in IOH's private cloud. For a trial on Google Cloud, AWS or a VPS
 from any provider, follow [environments/](environments/README.md) instead: a script there creates the
 server in the cloud, and the steps use the same installer with a few other values (no web proxy, the
-cloud's firewall, and a Cloudflare Tunnel as the way in). There, one settings file and one command can
+cloud's firewall, and a Cloudflare Tunnel or direct access as the way in). There, one settings file and one command can
 also do everything at once (`scripts/autoinstall.sh`, "Automatic install"), which makes a rebuild two
 commands.
 
@@ -166,7 +168,7 @@ Each version of the kit is published as a zip in the `dist` folder of this repos
 SHA-256 checksum in `dist/SHA256SUMS`. On the server (`wget -O` works the same as `curl -o`):
 
 ```bash
-curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.4.0.zip
+curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.5.0.zip
 sha256sum /tmp/ioh-msp-stack.zip      # must equal the line for this file in dist/SHA256SUMS
 command -v unzip >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y unzip)
 sudo mkdir -p /opt/ioh-msp-stack && sudo chown "$(id -un):" /opt/ioh-msp-stack
@@ -204,6 +206,7 @@ Then, from `/opt/ioh-msp-stack` and without sudo:
 ./scripts/install.sh sso --admin-email you@ioh.co.id --name "Your Name"   # Keycloak and the first administrator
 ./scripts/install.sh console                       # the MSP Console on https://console.<domain>
 ./scripts/install.sh sso-tools                     # staff sign in to Nautobot, Zabbix, Semaphore, Forgejo, Grafana with Keycloak
+./scripts/install.sh gate                          # direct access: the sign-in gate in front of the engineers' tools
 ./scripts/install.sh chat telegram                 # chat alerts (or: chat teams, chat email, chat test, chat off)
 ./scripts/install.sh grafana                       # phase 3: customer dashboards
 ./scripts/install.sh samples                       # optional: two made-up customers to practise on
@@ -215,6 +218,9 @@ every network, as IOH's network needs. `127.0.0.1` keeps a port on the server it
 ports when a Cloudflare Tunnel on the server is the way in, and for 10051 when no collector connects
 from outside. Docker's published ports bypass the server's firewall (ufw), so these settings are what
 closes them. On a running platform, `docker compose up -d proxy zabbix-server` applies a change.
+`--way-in ioh`, `cloudflare` or `direct` sets both, `ADMIN_NETWORKS` and the certificates the way each
+way in needs them; [environments/direct-access.md](environments/direct-access.md) explains the third,
+for a server that browsers reach straight from the Internet (Let's Encrypt and the sign-in gate).
 
 `sso` starts Keycloak, creates the realm `msp` with the three roles and the console's client, and
 with `--admin-email` the first administrator; it prints a one-time password that Keycloak replaces
@@ -305,6 +311,13 @@ platform did before. Its images are still 1.2.0's.
 From 1.3.0 to 1.4.0, unpack and that is all: 1.4.0 adds the automatic install
 (`scripts/autoinstall.sh`, `environments/bootstrap.sh` and `--autoinstall` in the create scripts) and
 changes nothing on a platform that is already installed.
+
+From 1.4.0 to 1.5.0, unpack, then `docker compose up -d proxy`: Caddy picks up its new rules, which work
+as before while `STAFF_GATE` is off (the default). 1.5.0 adds direct access, the way in without
+Cloudflare ([environments/direct-access.md](environments/direct-access.md)): `settings --way-in`, the
+`gate` stage and `dns`, `WAY_IN=direct` in the automatic install, and `--way-in direct` in the create
+scripts, which keep a fixed address. The delete scripts now keep that address for a rebuild;
+`--release-address` releases it. The images are still 1.2.0's.
 
 The guide's build tab lists the same work as manual steps, for anyone who wants to see or repeat a
 single step by hand.
