@@ -21,6 +21,10 @@ export const keys = {
   audit: (filter: AuditFilter) => ["audit", filter] as const,
   sessions: ["sessions"] as const,
   glue: ["glue"] as const,
+  paths: (code: string) => ["paths", code] as const,
+  capacity: (customer: string, trouble: boolean) => ["capacity", customer, trouble] as const,
+  reports: (month: string | undefined) => ["reports", month ?? "last"] as const,
+  report: (code: string, month: string) => ["report", code, month] as const,
 };
 
 export const useMe = () => useQuery({ queryKey: keys.me, queryFn: () => api.me(), staleTime: 5 * 60_000 });
@@ -51,6 +55,24 @@ export const useService = (month?: string) =>
 export const useAudit = (filter: AuditFilter) =>
   useQuery({ queryKey: keys.audit(filter), queryFn: () => api.audit(filter), placeholderData: keepPreviousData, refetchInterval: live(30_000) });
 export const useSessions = () => useQuery({ queryKey: keys.sessions, queryFn: () => api.sessions(), refetchInterval: live(60_000) });
+export const usePaths = (code: string) =>
+  useQuery({ queryKey: keys.paths(code), queryFn: () => api.paths(code), refetchInterval: live(60_000), placeholderData: keepPreviousData });
+export const useCapacity = (customer = "", trouble = false) =>
+  useQuery({ queryKey: keys.capacity(customer, trouble), queryFn: () => api.capacity(customer, trouble), refetchInterval: live(300_000) });
+export const useReports = (month?: string) =>
+  useQuery({
+    queryKey: keys.reports(month),
+    queryFn: () => api.reports(month),
+    placeholderData: keepPreviousData,
+    refetchInterval: (q) => (q.state.data?.rows.some((r) => r.status === "drafting") ? 4000 : live(60_000)),
+  });
+export const useReport = (code: string, month: string) =>
+  useQuery({
+    queryKey: keys.report(code, month),
+    queryFn: () => api.report(code, month),
+    // while the console drafts, look again every few seconds; otherwise leave the engineer's edits alone
+    refetchInterval: (q) => (q.state.data?.status === "drafting" ? 3000 : false),
+  });
 
 /** After a change, read everything again (the demo also again a few seconds later, when its follow-ups finish). */
 export function useRefreshAll() {

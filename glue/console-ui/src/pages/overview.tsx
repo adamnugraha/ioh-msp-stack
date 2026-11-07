@@ -2,10 +2,11 @@
 import { RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
+import { CapacityTable } from "@/components/capacity";
 import type { Overview } from "@/lib/api";
 import { ago, plural, since } from "@/lib/format";
 import { useNow } from "@/hooks/use-now";
-import { useMe, useOverview, useRefreshAll } from "@/lib/queries";
+import { useMe, useOverview, useRefreshAll, useCapacity } from "@/lib/queries";
 import { SEVERITY_NAMES } from "@/lib/status";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -217,11 +218,29 @@ export function OverviewPage() {
         </div>
       </div>
 
+      <EarlyWarnings />
+
       <div className="mt-5">
         <Section title="Customers" description="Each customer as every tool sees it. Tinted cells need attention; each opens the place to deal with it.">
             <CustomerMatrix customers={data.customers} />
           </Section>
       </div>
     </Page>
+  );
+}
+
+/** Links close to their capacity, every customer (msp-glue's nightly forecast, kit 1.6.0). */
+function EarlyWarnings() {
+  const { data } = useCapacity("", true);
+  if (!data || !data.links.length) return null;
+  const warn = data.settings.warn_percent ?? 80;
+  return (
+    <Section
+      className="mt-5"
+      title="Early warning: links close to capacity"
+      description={`Busy hour above ${warn} % of the circuit, or forecast to reach it within ${data.settings.horizon_days ?? 45} days. msp-glue opens one GLPI ticket per link for the NOC.`}
+    >
+      <CapacityTable links={data.links.slice(0, 8)} showCustomer warn={warn} />
+    </Section>
   );
 }

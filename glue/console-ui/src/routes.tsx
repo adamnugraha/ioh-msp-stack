@@ -7,6 +7,7 @@ import { AuditPage } from "@/pages/audit";
 import { ChangesPage } from "@/pages/changes";
 import { CustomerLayout } from "@/pages/customer/layout";
 import { CustomerOverview } from "@/pages/customer/overview";
+import { CustomerPaths } from "@/pages/customer/paths";
 import {
   CustomerActivity,
   CustomerAutomation,
@@ -18,6 +19,7 @@ import {
 import { CustomersPage } from "@/pages/customers";
 import { DevicePage } from "@/pages/device";
 import { OverviewPage } from "@/pages/overview";
+import { ReportPage, ReportsPage } from "@/pages/reports";
 import { ServicePage } from "@/pages/service";
 import { NotFoundPage, ToolsPage } from "@/pages/tools";
 
@@ -59,6 +61,7 @@ export const routes: RouteObject[] = [
               { index: true, element: <CustomerOverview /> },
               { path: "devices", element: <CustomerDevices /> },
               { path: "network", element: <CustomerNetwork /> },
+              { path: "paths", element: <CustomerPaths /> },
               { path: "work", element: <CustomerWork /> },
               { path: "changes", element: <CustomerChanges /> },
               { path: "automation", element: <CustomerAutomation /> },
@@ -68,6 +71,8 @@ export const routes: RouteObject[] = [
           { path: "customers/:code/devices/:name", element: <DevicePage /> },
           { path: "changes", element: <ChangesPage /> },
           { path: "service", element: <ServicePage /> },
+          { path: "reports", element: <ReportsPage /> },
+          { path: "reports/:code/:month", element: <ReportPage /> },
           { path: "audit", element: <AuditPage /> },
           { path: "tools", element: <ToolsPage /> },
           { path: "*", element: <NotFoundPage /> },

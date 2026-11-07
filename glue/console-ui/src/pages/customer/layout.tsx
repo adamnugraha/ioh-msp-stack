@@ -90,6 +90,7 @@ export function CustomerLayout() {
     { to: `/customers/${code}`, label: "Overview", end: true },
     { to: `/customers/${code}/devices`, label: "Devices", count: data.devices.length },
     { to: `/customers/${code}/network`, label: "Network map" },
+    { to: `/customers/${code}/paths`, label: "Path tests" },
     { to: `/customers/${code}/work`, label: "Problems and tickets", count: data.problems.length + data.tickets.length },
     { to: `/customers/${code}/changes`, label: "Changes and maintenance", count: openChanges },
     { to: `/customers/${code}/automation`, label: "Automation" },

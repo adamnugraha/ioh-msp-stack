@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 const PLAN: { area: string; preview: string; kit: string }[] = [
   {
     area: "Pages",
-    preview: "Overview, customers, one page per customer with devices, network map, problems and tickets, automation and activity; one page per device; changes and maintenance; service levels; audit trail; tools and sign-in.",
+    preview: "Overview, customers, one page per customer with devices, network map, path tests, problems and tickets, automation and activity; one page per device; changes and maintenance; service levels; monthly reports; audit trail; tools and sign-in.",
     kit: "The same React pages, served by the console container. The 1.1 addresses keep working, so the links in chat alerts still open the right customer.",
   },
   {
@@ -36,6 +36,21 @@ const PLAN: { area: string; preview: string; kit: string }[] = [
     kit: "Off until a model endpoint is set (Ollama, vLLM, Netra or any OpenAI-compatible server). The console reads the tools with its own read-only accounts; secrets in configuration backups are masked before anything is sent.",
   },
   {
+    area: "Path tests",
+    preview: "Two sample site collectors for the bank and one for ACME, with a slow branch link in Medan.",
+    kit: "From 1.6.0: one Zabbix host per site collector and target (ping, connection and web checks), kept by msp-glue from mappings.yaml and the tenant field msp_path_targets.",
+  },
+  {
+    area: "Capacity",
+    preview: "Sample forecasts for six links.",
+    kit: "From 1.6.0: msp-glue's nightly forecast from four weeks of Zabbix busy hours against Nautobot commit rates, with one GLPI ticket per link at risk.",
+  },
+  {
+    area: "Monthly reports",
+    preview: "One approved report, one draft with a number to check. Drafting writes sample text.",
+    kit: "From 1.6.0: drafts from the tools' figures, text from the console's model (or fixed sentences), a check of every number, approval by an engineer or manager, a printable page.",
+  },
+  {
     area: "Single sign-on",
     preview: "The tools menu and the tools page show how each tool signs people in.",
     kit: "Keycloak clients for Nautobot, Forgejo, Semaphore and Grafana (OpenID Connect), then Zabbix (SAML). For GLPI the method is chosen during the lab work. Keycloak roles map to each tool's own groups.",
@@ -57,13 +72,13 @@ export function PreviewBanner() {
           <b className="font-semibold">Preview with sample data.</b> The customers, devices and numbers are made up; actions change the sample only and nothing reaches the tools.
         </span>
         <Button size="xs" variant="outline" className="border-preview-border bg-transparent text-preview-foreground hover:bg-preview-border/40" onClick={() => setOpen(true)}>
-          What kit 1.2.0 adds
+          What the kit adds
         </Button>
       </div>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[calc(100dvh-1.5rem)] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>What the preview shows, and what kit 1.2.0 adds</DialogTitle>
+            <DialogTitle>What the preview shows, and what the kit adds</DialogTitle>
             <DialogDescription>
               The preview is the console's real front end with a sample data source. The kit swaps that source for the console's API; the pages stay the same.
             </DialogDescription>

@@ -648,6 +648,208 @@ export interface DeviceIndexRow {
 }
 
 // ---------------------------------------------------------------------------- the client
+// --------------------------------------------------------------------- path tests (kit 1.6.0)
+export type PathSegment = "ioh" | "internet" | "application";
+export type PathState = "ok" | "warn" | "bad" | "info" | "unknown";
+export type PathCheck = "icmp" | "tcp" | "https";
+
+export interface PathProblem {
+  name: string;
+  severity: Severity;
+  since: string;
+}
+
+export interface PathTarget {
+  name: string;
+  segment: PathSegment;
+  checks: PathCheck[];
+  address: string;
+  url: string;
+  /** latest values: ping delay and loss, TCP connection time, web response time and status */
+  delayMs: number | null;
+  lossPct: number | null;
+  connectMs: number | null;
+  webMs: number | null;
+  webStatus: number | null;
+  webError: string;
+  limits: { delayMs: number | null; lossPct: number | null; webMs: number | null };
+  /** checks Zabbix could not run, with its reason */
+  broken: string[];
+  problems: PathProblem[];
+  state: PathState;
+  historyKind: "delay" | "connect" | "web";
+  /** hourly averages over the last 24 hours: [epoch ms, milliseconds] */
+  history: [number, number][];
+  lastSeen: string | null;
+}
+
+export interface PathVerdict {
+  /** where the trouble is: IOH's link to the site, beyond IOH's edge, the application, or the collector itself */
+  side: "ioh" | "internet" | "application" | "collector" | "none";
+  tone: "ok" | "warn" | "bad" | "neutral";
+  text: string;
+}
+
+export interface PathCollector {
+  name: string;
+  online: boolean;
+  lastSeen: string | null;
+  targets: PathTarget[];
+  segments: Partial<Record<PathSegment, PathState | "partial">>;
+  verdict: PathVerdict;
+}
+
+export interface PathTargetSetting {
+  name: string;
+  segment: PathSegment;
+  address: string;
+  url: string;
+  port: number;
+  checks: PathCheck[];
+  rtt_ms: number;
+  loss_percent: number;
+  http_ms: number;
+  collector: string;
+}
+
+export interface PathsView {
+  collectors: PathCollector[];
+  /** the customer has a proxy group of its own (a site collector) */
+  hasCollector: boolean;
+  /** what msp-glue tests: mappings.yaml defaults plus the tenant field msp_path_targets */
+  targets: PathTargetSetting[];
+  /** entries of msp_path_targets that could not be used */
+  errors: string[];
+  freshness: string | null;
+}
+
+// ------------------------------------------------------------------ capacity forecast (kit 1.6.0)
+export type CapacityStatus = "over" | "at_risk" | "ok" | "too_little_data" | "no_capacity" | "no_data" | "not_monitored";
+
+export interface CapacityLink {
+  customer: string;
+  customerName: string;
+  device: string;
+  site: string;
+  interface: string;
+  description: string;
+  circuit: string | null;
+  provider: string | null;
+  capacityBps: number | null;
+  capacityFrom: "circuit" | "interface" | "device" | null;
+  direction: "in" | "out" | null;
+  status: CapacityStatus;
+  /** average busy hour of the last 7 days */
+  busyBps: number | null;
+  peakBps: number | null;
+  utilisation: number | null;
+  slopeBpsPerDay: number | null;
+  daysToWarn: number | null;
+  days: number;
+  /** each day's busy hour: [epoch ms, bits per second] */
+  history: [number, number][];
+  ticketId: number | null;
+  ticketLink: string | null;
+}
+
+export interface CapacityView {
+  generated: string | null;
+  settings: { warn_percent?: number; horizon_days?: number; history_days?: number; min_days?: number };
+  links: CapacityLink[];
+  errors: string[];
+}
+
+// --------------------------------------------------------------------- monthly reports (kit 1.6.0)
+export type ReportStatus = "none" | "drafting" | "draft" | "approved" | "failed";
+export type ReportLanguage = "id" | "en";
+
+export interface ReportRow {
+  code: string;
+  name: string;
+  language: ReportLanguage;
+  status: ReportStatus;
+  /** numbers in the text that the facts do not contain */
+  flags: number;
+  writer: string;
+  updated: string | null;
+  approvedBy: string;
+  error: string;
+}
+
+export interface ReportList {
+  month: string;
+  label: string;
+  monthsAvailable: { month: string; label: string }[];
+  rows: ReportRow[];
+  writer: { model: string | null };
+}
+
+export interface ReportNarrative {
+  summary: string;
+  availability: string;
+  service: string;
+  paths: string;
+  capacity: string;
+  recommendations: string[];
+}
+
+export interface ReportFlag {
+  section: keyof ReportNarrative;
+  number: string;
+}
+
+export interface ReportFacts {
+  period: { month: string; label: string };
+  availability: {
+    target_percent: number | null;
+    achieved_percent: number | null;
+    previous_month_percent: number | null;
+    downtime_minutes: number | null;
+    met?: boolean;
+  };
+  tickets: {
+    opened: number;
+    solved: number;
+    service_level_breaches: number;
+    taken_late: number;
+    resolved_late: number;
+    mean_hours_to_resolve: number | null;
+  };
+  configuration: { devices_checked: number; compliant_percent: number | null; backups_fresh_percent: number | null };
+  problems:
+    | { count: number; total_minutes: number; longest: { device: string; problem: string; severity: string; started: string; minutes: number }[] }
+    | { error: string };
+  paths:
+    | { collector: string; target: string; segment: PathSegment; problems: number; delay_ms?: number; connect_ms?: number; web_ms?: number; loss_percent?: number }[]
+    | { error: string };
+  capacity:
+    | { device: string; interface: string; circuit: string; capacity_mbps: number; busy_hour_mbps: number; utilisation_percent: number | null; days_to_warning: number | null; status: CapacityStatus }[]
+    | { error: string };
+  /** counts the text may use */
+  path_overview?: { targets: number; with_problems: number };
+  capacity_overview?: { links: number; warning_percent: number; near_or_over_warning: number };
+}
+
+export interface ReportDetail {
+  code: string;
+  name: string;
+  month: string;
+  label: string;
+  status: ReportStatus;
+  language?: ReportLanguage;
+  facts?: ReportFacts;
+  narrative?: ReportNarrative;
+  flags?: ReportFlag[];
+  /** the model that wrote the text, or "fixed sentences" */
+  writer?: string;
+  error?: string;
+  created?: string;
+  updated?: string;
+  editedBy?: string;
+  approvedBy?: string;
+  approvedAt?: string | null;
+}
+
 export interface ConsoleApi {
   /** true in the demo build: sample data, nothing leaves the page */
   readonly demo: boolean;
@@ -676,6 +878,20 @@ export interface ConsoleApi {
   createTicket(req: TicketRequest): Promise<ActionResult>;
   createMaintenance(req: MaintenanceRequest): Promise<ActionResult>;
   addDevice(req: DeviceRequest): Promise<ActionResult>;
+
+  /** kit 1.6.0: path tests from the customer's site collectors */
+  paths(code: string): Promise<PathsView>;
+  /** kit 1.6.0: msp-glue's link capacity forecast, for one customer or (trouble) the links at risk */
+  capacity(customer?: string, trouble?: boolean): Promise<CapacityView>;
+  /** kit 1.6.0: monthly customer reports */
+  reports(month?: string): Promise<ReportList>;
+  report(code: string, month: string): Promise<ReportDetail>;
+  draftReport(code: string, month: string): Promise<ActionResult>;
+  saveReport(code: string, month: string, text: ReportNarrative): Promise<ActionResult>;
+  approveReport(code: string, month: string): Promise<ActionResult>;
+  reopenReport(code: string, month: string): Promise<ActionResult>;
+  /** the printable page of a report; null in the preview */
+  reportPrintUrl(code: string, month: string): string | null;
 
   /** where a CSV export downloads from; null when there is nothing to download (demo) */
   exportUrl(kind: "service" | "audit", params?: Record<string, string>): string | null;

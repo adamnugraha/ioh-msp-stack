@@ -16,6 +16,9 @@ import {
   type Maintenance,
   type Me,
   type Problem,
+  type ReportDetail,
+  type ReportLanguage,
+  type ReportNarrative,
   type ServiceRow,
   type Sla,
   type Task,
@@ -24,6 +27,7 @@ import {
 } from "../types";
 import { DAY, dayKey, hash, HOUR, iso, MIN, monthKey, monthLabel, monthStart, wibMidnight } from "./clock";
 import { scriptFor, type Script } from "./investigations";
+import { demoCapacity, demoFacts, demoFlags, demoNarrative, demoPaths, reportMonthLabel } from "./observe";
 import { chartsFor, interfacesFor, metricsFor } from "./metrics";
 import {
   buildState,
@@ -235,6 +239,33 @@ export function createDemoApi(): ConsoleApi {
     };
     return entry.inv;
   }
+
+  // ------------------------------------------------------------------- monthly reports (kit 1.6.0)
+  const reportLanguage = (code: string): ReportLanguage => (code === "energi" ? "en" : "id");
+  const lastMonth = monthKey(monthStart(Date.now(), -1));
+  const names = () => Object.fromEntries(state.customers.map((c) => [c.code, c.name]));
+  type Stored = Omit<ReportDetail, "code" | "name" | "month" | "label">;
+  const reports = new Map<string, Stored>();
+  const factsFor = (c: DemoCustomer, month: string) => {
+    const capacity = demoCapacity(names(), Date.now()).filter((l) => l.customer === c.code);
+    return demoFacts(c, month, reportLanguage(c.code), sla(c)?.previous ?? null, capacity, demoPaths(c, Date.now()));
+  };
+  const store = (c: DemoCustomer, month: string, extra: Partial<Stored> = {}, text?: (n: ReportNarrative) => ReportNarrative) => {
+    const language = reportLanguage(c.code);
+    const facts = factsFor(c, month);
+    const narrative = (text ?? ((n) => n))(demoNarrative(facts, language));
+    reports.set(`${c.code}|${month}`, {
+      status: "draft", language, facts, narrative, flags: demoFlags(narrative, facts), writer: "qwen3:8b", error: "",
+      created: iso(Date.now() - 2 * DAY), updated: iso(Date.now() - 2 * DAY), editedBy: "", approvedBy: "", approvedAt: null, ...extra,
+    });
+  };
+  store(customer("bankx"), lastMonth, { status: "approved", approvedBy: STAFF.eko.name, approvedAt: iso(Date.now() - DAY), editedBy: STAFF.eko.name });
+  // acme's draft says 4 problems where Zabbix counted 3, so the preview shows a number to check
+  store(customer("acme"), lastMonth, {}, (n) => ({ ...n, availability: n.availability + " Tercatat 4 gangguan dengan tingkat High." }));
+  const needReporter = () => {
+    if (!me().canAct && !me().isManager) fail("Monthly reports need the engineer or manager role.", 403);
+  };
+  const reportOf = (code: string, month: string) => reports.get(`${code}|${month}`);
 
   // ------------------------------------------------------------------------------------- the API
   const api: ConsoleApi = {
@@ -750,6 +781,92 @@ export function createDemoApi(): ConsoleApi {
         auditId: row.id, id: device.id,
       };
     },
+
+    async paths(code) {
+      await read();
+      return demoPaths(customer(code), Date.now());
+    },
+
+    async capacity(code, trouble) {
+      await read();
+      const links = demoCapacity(names(), Date.now()).filter((l) => (!code || l.customer === code) && (!trouble || l.status === "over" || l.status === "at_risk"));
+      const rank = { over: 0, at_risk: 1, ok: 2, too_little_data: 3, no_capacity: 4, no_data: 5, not_monitored: 6 };
+      links.sort((a, b) => rank[a.status] - rank[b.status] || (a.daysToWarn ?? 1e9) - (b.daysToWarn ?? 1e9));
+      return { generated: iso(wibMidnight(Date.now()) + 3 * HOUR - 7 * HOUR), settings: { warn_percent: 80, horizon_days: 45, history_days: 28, min_days: 14 }, links, errors: [] };
+    },
+
+    async reports(month) {
+      await read();
+      const chosen = month && month < monthKey(Date.now()) ? month : lastMonth;
+      const months = [];
+      for (let i = 1; i <= 12; i++) {
+        const m = monthKey(monthStart(Date.now(), -i));
+        months.push({ month: m, label: reportMonthLabel(m) });
+      }
+      return {
+        month: chosen, label: reportMonthLabel(chosen), monthsAvailable: months, writer: { model: "qwen3:8b" },
+        rows: [...state.customers].sort((a, b) => a.name.localeCompare(b.name)).map((c) => {
+          const r = reportOf(c.code, chosen);
+          return { code: c.code, name: c.name, language: r?.language ?? reportLanguage(c.code), status: r?.status ?? "none",
+            flags: r?.flags?.length ?? 0, writer: r?.writer ?? "", updated: r?.updated ?? null, approvedBy: r?.approvedBy ?? "", error: r?.error ?? "" };
+        }),
+      };
+    },
+
+    async report(code, month) {
+      await read();
+      const c = customer(code);
+      const r = reportOf(code, month);
+      return { code, name: c.name, month, label: reportMonthLabel(month), status: "none", ...r };
+    },
+
+    async draftReport(code, month) {
+      await act();
+      needReporter();
+      const c = customer(code);
+      if (month >= monthKey(Date.now())) fail("A report can only be drafted for a month that has ended.");
+      if (reportOf(code, month)?.status === "approved") fail("This report is approved. Reopen it before drafting it again.", 409);
+      const row = audit({ action: "report draft", customer: code, target: month, ticket: "", reason: "", outcome: "started", result: "" });
+      reports.set(`${code}|${month}`, { ...(reportOf(code, month) ?? {}), status: "drafting", language: reportLanguage(code) });
+      later(3500, () => {
+        store(c, month, { created: iso(Date.now()), updated: iso(Date.now()) });
+        finish(row, "done", `Draft written (qwen3:8b); ${reportOf(code, month)?.flags?.length ?? 0} numbers to check.`);
+      });
+      return { message: `Drafting the ${reportMonthLabel(month)} report for ${code}. It takes a few minutes with a model.`, auditId: row.id };
+    },
+
+    async saveReport(code, month, text) {
+      await act();
+      needReporter();
+      const r = reportOf(code, month) ?? fail("There is no draft for this month yet.", 404);
+      if (r.status !== "draft") fail("Only a draft can be edited. Reopen an approved report first.", 409);
+      const flags = demoFlags(text, r.facts!);
+      reports.set(`${code}|${month}`, { ...r, narrative: text, flags, editedBy: me().name, updated: iso(Date.now()) });
+      const row = audit({ action: "report edit", customer: code, target: month, ticket: "", reason: "", outcome: "done", result: `${flags.length} numbers to check` });
+      return { message: "Text saved." + (flags.length ? ` ${flags.length} numbers are not in the data; check them before approving.` : ""), auditId: row.id };
+    },
+
+    async approveReport(code, month) {
+      await act();
+      needReporter();
+      const r = reportOf(code, month);
+      if (!r || r.status !== "draft") fail("Only a finished draft can be approved.", 409);
+      reports.set(`${code}|${month}`, { ...r!, status: "approved", approvedBy: me().name, approvedAt: iso(Date.now()), updated: iso(Date.now()) });
+      const row = audit({ action: "report approve", customer: code, target: month, ticket: "", reason: "", outcome: "done", result: "Approved" });
+      return { message: `Approved. The ${reportMonthLabel(month)} report for ${code} prints without the draft mark now.`, auditId: row.id };
+    },
+
+    async reopenReport(code, month) {
+      await act();
+      needReporter();
+      const r = reportOf(code, month);
+      if (!r || r.status !== "approved") fail("Only an approved report can be reopened.", 409);
+      reports.set(`${code}|${month}`, { ...r!, status: "draft", approvedBy: "", approvedAt: null, updated: iso(Date.now()) });
+      const row = audit({ action: "report reopen", customer: code, target: month, ticket: "", reason: "", outcome: "done", result: "" });
+      return { message: "Reopened as a draft.", auditId: row.id };
+    },
+
+    reportPrintUrl: () => null,
 
     exportUrl: () => null,
 

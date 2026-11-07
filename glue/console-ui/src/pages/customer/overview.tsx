@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { ago, pct, since } from "@/lib/format";
 import { useNow } from "@/hooks/use-now";
+import { useCapacity } from "@/lib/queries";
+import { CapacityTable } from "@/components/capacity";
 import { severityName } from "@/lib/status";
 import { BudgetMeter, DowntimeColumns } from "@/components/charts/service-charts";
 import { Empty, Section, Stat } from "@/components/page";
@@ -141,6 +143,8 @@ export function CustomerOverview() {
         </Section>
       </div>
 
+      <CustomerCapacity code={s.code} />
+
       <div className="grid gap-5 lg:grid-cols-2">
         <Section title="Planned" description="Maintenance windows and changes still to come" actions={<Link to={`/customers/${s.code}/changes`} className="text-[13px] text-link hover:underline">All</Link>}>
           {next.length ? (
@@ -182,5 +186,22 @@ export function CustomerOverview() {
         </Section>
       </div>
     </div>
+  );
+}
+
+/** The customer's links against their capacity (msp-glue's nightly forecast, kit 1.6.0). */
+function CustomerCapacity({ code }: { code: string }) {
+  const { data } = useCapacity(code);
+  if (!data || !data.links.length) return null;
+  const shown = data.links.filter((l) => !["no_data", "not_monitored"].includes(l.status));
+  if (!shown.length) return null;
+  const warn = data.settings.warn_percent ?? 80;
+  return (
+    <Section
+      title="Link capacity"
+      description={`Busy hour against each circuit's commit rate, forecast every night from four weeks of Zabbix traffic. A link at risk reaches ${warn} % within ${data.settings.horizon_days ?? 45} days.`}
+    >
+      <CapacityTable links={shown} warn={warn} />
+    </Section>
   );
 }

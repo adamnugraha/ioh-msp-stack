@@ -123,6 +123,12 @@ def facts(code: str, month: str) -> dict:
         except Exception as exc:  # noqa: BLE001 - one source down: say so in the facts, keep the others
             log.warning("Report %s %s: %s not read: %s", code, month, name, exc)
             out[name] = {"error": f"{type(exc).__name__}: {exc}"[:200]}
+    # Counts the text may use, so they are facts too (and pass the number check)
+    paths = out["paths"] if isinstance(out["paths"], list) else []
+    out["path_overview"] = {"targets": len(paths), "with_problems": sum(1 for p in paths if p.get("problems"))}
+    links = out["capacity"] if isinstance(out["capacity"], list) else []
+    out["capacity_overview"] = {"links": len(links), "warning_percent": _warn(),
+                                "near_or_over_warning": sum(1 for c in links if c["status"] in ("over", "at_risk"))}
     return out
 
 
@@ -287,7 +293,7 @@ def fixed_text(f: dict) -> dict:
     paths = f.get("paths") if isinstance(f.get("paths"), list) else []
     cap = f.get("capacity") if isinstance(f.get("capacity"), list) else []
     risky = [c for c in cap if c["status"] in ("over", "at_risk")]
-    bad_paths = [x for x in paths if x.get("problems")]
+    with_problems = (f.get("path_overview") or {}).get("with_problems", sum(1 for x in paths if x.get("problems")))
     n = lambda v, d=2: fmt(v, lang, d)  # noqa: E731
     if lang == "id":
         if a.get("achieved_percent") is not None:
@@ -306,7 +312,7 @@ def fixed_text(f: dict) -> dict:
         path_text = ""
         if paths:
             path_text = (f"Uji jalur dari lokasi pelanggan memeriksa {len(paths)} tujuan; "
-                         + (f"{len(bad_paths)} di antaranya sempat mencatat masalah." if bad_paths else
+                         + (f"{with_problems} di antaranya sempat mencatat masalah." if with_problems else
                             "tidak ada masalah yang tercatat."))
         cap_text = ""
         if risky:
@@ -332,7 +338,7 @@ def fixed_text(f: dict) -> dict:
         path_text = ""
         if paths:
             path_text = (f"Path tests from the customer's sites checked {len(paths)} targets; "
-                         + (f"{len(bad_paths)} of them recorded problems." if bad_paths else "none recorded a problem."))
+                         + (f"{with_problems} of them recorded problems." if with_problems else "none recorded a problem."))
         cap_text = ""
         if risky:
             cap_text = f"{len(risky)} links are close to or above {n(_warn(), 0)}% of capacity at their busy hour."
@@ -622,7 +628,7 @@ def detail(code: str, month: str) -> dict | None:
         return None
     if not r:
         return {"code": code, "name": tenant.name, "month": month, "label": month_label(month), "status": "none"}
-    return {"code": code, "name": tenant.name, "month": month, "label": month_label(month, r["language"]),
+    return {"code": code, "name": tenant.name, "month": month, "label": month_label(month),
             "status": "drafting" if r["busy"] else r["status"], "language": r["language"], "facts": r["facts"],
             "narrative": r["narrative"], "flags": r["flags"], "writer": r["writer"], "error": r["error"],
             "created": r["created"].isoformat(timespec="seconds"), "updated": r["updated"].isoformat(timespec="seconds"),

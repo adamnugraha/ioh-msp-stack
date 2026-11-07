@@ -5,6 +5,7 @@ import {
   type ActionResult,
   type AuditFilter,
   type AuditPage,
+  type CapacityView,
   type ConsoleApi,
   type CustomerDetail,
   type CustomerSummary,
@@ -18,7 +19,11 @@ import {
   type Me,
   type NoteRequest,
   type Overview,
+  type PathsView,
   type PlaybookRequest,
+  type ReportDetail,
+  type ReportList,
+  type ReportNarrative,
   type ServiceReport,
   type SessionRow,
   type TicketRequest,
@@ -109,6 +114,16 @@ export function createHttpApi(): ConsoleApi {
     createMaintenance: (req: MaintenanceRequest) =>
       post<ActionResult>(`/customers/${enc(req.customer)}/maintenance`, req),
     addDevice: (req: DeviceRequest) => post<ActionResult>(`/customers/${enc(req.customer)}/devices`, req),
+
+    paths: (code) => get<PathsView>(`/customers/${enc(code)}/paths`),
+    capacity: (customer, trouble) => get<CapacityView>(`/capacity${query({ customer, trouble: trouble ? "true" : undefined })}`),
+    reports: (month) => get<ReportList>(`/reports${query({ month })}`),
+    report: (code, month) => get<ReportDetail>(`/reports/${enc(code)}/${enc(month)}`),
+    draftReport: (code, month) => post<ActionResult>(`/reports/${enc(code)}/${enc(month)}/draft`),
+    saveReport: (code, month, text: ReportNarrative) => post<ActionResult>(`/reports/${enc(code)}/${enc(month)}/text`, text),
+    approveReport: (code, month) => post<ActionResult>(`/reports/${enc(code)}/${enc(month)}/approve`),
+    reopenReport: (code, month) => post<ActionResult>(`/reports/${enc(code)}/${enc(month)}/reopen`),
+    reportPrintUrl: (code, month) => `${BASE}/reports/${enc(code)}/${enc(month)}/print`,
 
     exportUrl: (kind, params = {}) => `${BASE}/${kind}.csv${query(params)}`,
   };
