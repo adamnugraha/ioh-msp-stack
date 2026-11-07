@@ -12,6 +12,7 @@
   mspctl proxy add <code> <proxy-name>  register (or re-key) a customer-site Zabbix proxy and print its settings
   mspctl paths list <code>              a customer's path test targets, collectors and Zabbix hosts
   mspctl paths sync [<code>]            create or repair the path test hosts on the site collectors now
+  mspctl capacity [<code>] [--no-tickets]  forecast link capacity now (and open GLPI tickets for links at risk)
   mspctl user add <code> <login> ...    create a customer portal user (GLPI, and Grafana with --grafana)
   mspctl user disable <code> <login>    remove a customer user's access
   mspctl compliance                     open, update or solve configuration-drift tickets
@@ -34,7 +35,7 @@ import os
 import secrets
 import sys
 
-from . import bootstrap, chat, clients, compliance, customers, devices, paths, tenants
+from . import bootstrap, capacity, chat, clients, compliance, customers, devices, paths, tenants
 from .http import APIError
 from .locking import exclusive
 from .settings import settings
@@ -231,6 +232,26 @@ def cmd_paths(args) -> int:
     return 1 if errors else 0
 
 
+def cmd_capacity(args) -> int:
+    summary = capacity.run(args.code, tickets=False if args.no_tickets else None)
+    print("Capacity forecast: " + ", ".join(f"{k} {v}" for k, v in summary.items()))
+    result = capacity.load()
+    links = [x for x in result.get("links", []) if not args.code or x["customer"] == args.code]
+    order = {"over": 0, "at_risk": 1, "ok": 2}
+    links.sort(key=lambda x: (order.get(x["status"], 3), x["days_to_warn"] if x["days_to_warn"] is not None else 9999))
+    if links:
+        print(f"{'STATUS':<16} {'USE':>6} {'DAYS TO WARN':>12} {'CAPACITY':>10}  LINK")
+    for x in links:
+        use = f"{x['utilisation']}%" if x.get("utilisation") is not None else "-"
+        days = f"{x['days_to_warn']:.0f}" if x.get("days_to_warn") is not None else "-"
+        ticket = f"  ticket #{x['ticket_id']}" if x.get("ticket_id") else ""
+        print(f"{x['status']:<16} {use:>6} {days:>12} {capacity.rate(x['capacity_bps'] or None):>10}  "
+              f"{x['customer']}/{x['device']} {x['interface']}{' ' + x['circuit'] if x['circuit'] else ''}{ticket}")
+    for line in result.get("errors", []):
+        print(f"  error  {line}")
+    return 1 if summary.get("errors") else 0
+
+
 def cmd_user(args) -> int:
     if args.action == "add":
         result = customers.add_user(args.code, args.login, email=args.email, full_name=args.name,
@@ -365,6 +386,10 @@ def main(argv: list[str] | None = None) -> int:
     pa.add_argument("action", choices=["list", "sync"])
     pa.add_argument("code", nargs="?", default="")
 
+    ca = sub.add_parser("capacity")
+    ca.add_argument("code", nargs="?", default="")
+    ca.add_argument("--no-tickets", action="store_true", help="forecast only; open no GLPI tickets")
+
     u = sub.add_parser("user")
     u.add_argument("action", choices=["add", "disable"])
     u.add_argument("code")
@@ -411,9 +436,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         settings.dry_run = True
     handlers = {"check": cmd_check, "bootstrap": cmd_bootstrap, "tenant": cmd_tenant, "device": cmd_device,
-                "proxy": cmd_proxy, "paths": cmd_paths, "user": cmd_user, "compliance": cmd_compliance, "serve": cmd_serve,
+                "proxy": cmd_proxy, "paths": cmd_paths, "capacity": cmd_capacity, "user": cmd_user, "compliance": cmd_compliance, "serve": cmd_serve,
                 "sso": cmd_sso, "staff": cmd_staff, "console": cmd_console, "chat": cmd_chat}
-    changes_tools = args.command in ("device", "proxy", "user", "compliance") or (
+    changes_tools = args.command in ("device", "proxy", "user", "compliance", "capacity") or (
         args.command in ("tenant", "paths") and args.action not in ("list",))
     try:
         if changes_tools:

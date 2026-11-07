@@ -245,8 +245,9 @@ def host_macros(target: Target, collector: str) -> list[dict]:
 
 
 def host_tags(tenant: Tenant, collector: str, target: Target) -> list[dict]:
+    # "path_target", not "target": Zabbix's own templates use the tag target for the kind of template.
     tags = {"managed_by": MANAGED_VALUE, "tenant": tenant.code, "tenant_name": tenant.name, "collector": collector,
-            "segment": target.segment, "target": target.name}
+            "segment": target.segment, "path_target": target.name}
     return [{"tag": k, "value": v} for k, v in tags.items()]
 
 
@@ -305,7 +306,7 @@ def sync_tenant(tenant: Tenant, z: Zabbix | None = None) -> SyncReport:
                 z.host_update({"hostid": host["hostid"], "status": 1,
                                "tags": [t for t in host.get("tags", []) if t["tag"] != "msp_retired"]
                                + [{"tag": "msp_retired", "value": "target or collector removed"}]})
-            report.disabled.append(f"{tenant.code}/{_tag(host, 'collector')}/{_tag(host, 'target')}")
+            report.disabled.append(f"{tenant.code}/{_tag(host, 'collector')}/{_tag(host, 'path_target')}")
     if wanted and not settings.dry_run:
         from .tenants import refresh_zabbix_permissions
         refresh_zabbix_permissions(z, tenant)

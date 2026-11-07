@@ -184,11 +184,11 @@ def test_one_host_per_collector_and_target(monkeypatch):
 def test_hosts_are_repaired_and_unwanted_ones_disabled(monkeypatch):
     monkeypatch.setattr("msp_glue.tenants.managed_tenants", lambda nb=None: [])
     existing = {"hostid": "5", "host": "acme-path-acme-jkt-01-microsoft-365", "name": "old", "status": "0",
-                "tags": [{"tag": "collector", "value": "acme-jkt-01"}, {"tag": "target", "value": "Microsoft 365"}],
+                "tags": [{"tag": "collector", "value": "acme-jkt-01"}, {"tag": "path_target", "value": "Microsoft 365"}],
                 "parentTemplates": [{"templateid": "100", "host": "MSP path test ICMP"}, {"templateid": "300", "host": "own"}],
                 "interfaces": [{"interfaceid": "8", "type": "1", "main": "1", "ip": "1.2.3.4", "dns": "", "useip": "1"}]}
     gone = {"hostid": "6", "host": "acme-path-acme-jkt-01-old-target", "name": "old", "status": "0",
-            "tags": [{"tag": "collector", "value": "acme-jkt-01"}, {"tag": "target", "value": "Old target"}]}
+            "tags": [{"tag": "collector", "value": "acme-jkt-01"}, {"tag": "path_target", "value": "Old target"}]}
     z = FakeZabbix(proxies=[{"proxyid": "11", "name": "acme-jkt-01", "state": "2"}], hosts=[existing, gone])
     report = paths.sync_tenant(tenant(), z)
     update = next(u for u in z.updated if u["hostid"] == "5")

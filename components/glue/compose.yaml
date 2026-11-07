@@ -55,6 +55,8 @@ services:
       - ../../zabbix/media:/app/seed/zabbix:ro
       # Path test templates (kit 1.6.0); msp-glue imports them when they are missing or older than the kit
       - ../../zabbix/templates:/app/seed/zabbix-templates:ro
+      # Shared with the MSP Console: msp-glue writes the daily capacity forecast there (capacity.json)
+      - console_data:/data
       - ../../grafana:/app/seed/grafana:ro
     # Listen on port 80 inside the container: GLPI only calls webhook URLs without a port number.
     sysctls:

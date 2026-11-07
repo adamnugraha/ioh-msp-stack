@@ -4,7 +4,7 @@ Endpoints
   GET  /healthz              liveness check
   POST /hooks/nautobot       tenant and device changes (signed with NAUTOBOT_WEBHOOK_SECRET)
   POST /hooks/glpi           change updates (signed with GLPI_WEBHOOK_SECRET)
-  POST /run/{job}            manual trigger: reconcile, compliance        } these three need the
+  POST /run/{job}            manual trigger: reconcile, compliance, capacity } these three need the
   POST /run/{job}/{code}     tenant (provision or repair one customer),    } Nautobot token as bearer
                              devices (push one customer's devices)        } (the MSP Console sends it)
   GET  /jobs                 the last 50 jobs with their result
@@ -27,7 +27,7 @@ import time
 
 from fastapi import FastAPI, HTTPException, Request
 
-from . import changes, compliance, devices, paths, sso_tools, tenants
+from . import capacity, changes, compliance, devices, paths, sso_tools, tenants
 from .common import DEVICE_FIELDS, TENANT_FIELDS
 from .locking import exclusive
 from .settings import settings
@@ -91,6 +91,7 @@ def _worker() -> None:
 def _scheduler() -> None:
     # First run shortly after start-up, then every GLUE_RECONCILE_INTERVAL seconds.
     # Configuration drift tickets are refreshed every GLUE_COMPLIANCE_INTERVAL seconds.
+    # Link capacity forecasts once a day, after the hour set in mappings.yaml (capacity.hour).
     time.sleep(30)
     last_compliance = 0.0
     while True:
@@ -98,6 +99,12 @@ def _scheduler() -> None:
         if time.time() - last_compliance >= settings.compliance_interval:
             enqueue("compliance", compliance.run)
             last_compliance = time.time()
+        try:
+            if capacity.due() and not any(r["name"] == "capacity" and r["status"] in ("queued", "running")
+                                          for r in _history):
+                enqueue("capacity", capacity.run)
+        except Exception:  # noqa: BLE001 - a broken results file must not stop the reconcile
+            log.exception("Capacity schedule check failed")
         time.sleep(max(60, settings.reconcile_interval))
 
 
@@ -239,7 +246,7 @@ def _authorise(request: Request) -> str:
 @app.post("/run/{job}")
 def run_job(job: str, request: Request) -> dict:
     who = _authorise(request)
-    jobs = {"reconcile": reconcile, "compliance": compliance.run}
+    jobs = {"reconcile": reconcile, "compliance": compliance.run, "capacity": capacity.run}
     if job not in jobs:
         raise HTTPException(status_code=404, detail=f"unknown job, use one of {sorted(jobs)}")
     record = enqueue(job, jobs[job], requested_by=who)

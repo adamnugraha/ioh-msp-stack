@@ -87,7 +87,7 @@ def main() -> int:
         "filter": {"name": ["ci-collector"]}, "output": ["state"]})[0]["state"]) == "2", limit=300)
 
     hosts = {h["host"]: h for h in paths.managed_path_hosts(z, "ci")}
-    by_target = {next(t["value"] for t in h["tags"] if t["tag"] == "target"): h["hostid"] for h in hosts.values()}
+    by_target = {next(t["value"] for t in h["tags"] if t["tag"] == "path_target"): h["hostid"] for h in hosts.values()}
 
     def values():
         items = items_by_host(z, list(by_target.values()))
@@ -127,7 +127,7 @@ def main() -> int:
     def outage_problem():
         found = z.call("problem.get", {"output": ["name", "severity"], "selectTags": "extend",
                                        "tags": [{"tag": "managed_by", "value": paths.MANAGED_VALUE, "operator": 1},
-                                                {"tag": "target", "value": "Nobody home", "operator": 1}]})
+                                                {"tag": "path_target", "value": "Nobody home", "operator": 1}]})
         return [p for p in found if "does not answer" in p["name"]]
 
     problems = wait("the problem for the target that never answers", outage_problem, limit=420)
