@@ -53,6 +53,8 @@ services:
       - ../../semaphore/playbooks:/app/seed/playbooks:ro
       - ../../golden-config:/app/seed/golden-config:ro
       - ../../zabbix/media:/app/seed/zabbix:ro
+      # Path test templates (kit 1.6.0); msp-glue imports them when they are missing or older than the kit
+      - ../../zabbix/templates:/app/seed/zabbix-templates:ro
       - ../../grafana:/app/seed/grafana:ro
     # Listen on port 80 inside the container: GLPI only calls webhook URLs without a port number.
     sysctls:

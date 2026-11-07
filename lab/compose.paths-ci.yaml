@@ -1,0 +1,61 @@
+# Test bench for the path test templates (kit 1.6.0): a bare Zabbix 7.0 with one site collector.
+# Used by .github/workflows/zabbix-templates.yml and by hand:
+#
+#   docker compose -f lab/compose.paths-ci.yaml up -d
+#   python3 lab/check_paths.py          (needs the glue package: pip install ./glue)
+#   docker compose -f lab/compose.paths-ci.yaml down -v
+#
+# The images are the ones the kit uses (ZABBIX_IMAGE_TAG and POSTGRES_IMAGE in .env.example).
+name: msp-paths-ci
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    environment:
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: ci-only-password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zabbix -d zabbix"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:${ZABBIX_IMAGE_TAG:-alpine-7.0.31}
+    environment:
+      DB_SERVER_HOST: postgres
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: ci-only-password
+      ZBX_PROXYCONFIGFREQUENCY: "10"
+      ZBX_STARTPINGERS: "2"
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:${ZABBIX_IMAGE_TAG:-alpine-7.0.31}
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      DB_SERVER_HOST: postgres
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: ci-only-password
+      PHP_TZ: Asia/Jakarta
+    ports:
+      - "127.0.0.1:8082:8080"
+    depends_on:
+      - zabbix-server
+
+  # The site collector, as edge-collector/compose.yaml runs it (without the key: the bench is one machine).
+  ci-collector:
+    image: zabbix/zabbix-proxy-sqlite3:${ZABBIX_IMAGE_TAG:-alpine-7.0.31}
+    environment:
+      ZBX_HOSTNAME: ci-collector
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_PROXYMODE: "0"
+      ZBX_PROXYCONFIGFREQUENCY: "10"
+      ZBX_STARTPOLLERS: "5"
+      ZBX_STARTPINGERS: "3"
+    depends_on:
+      - zabbix-server

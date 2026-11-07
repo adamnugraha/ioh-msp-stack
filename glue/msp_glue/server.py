@@ -27,7 +27,7 @@ import time
 
 from fastapi import FastAPI, HTTPException, Request
 
-from . import changes, compliance, devices, sso_tools, tenants
+from . import changes, compliance, devices, paths, sso_tools, tenants
 from .common import DEVICE_FIELDS, TENANT_FIELDS
 from .locking import exclusive
 from .settings import settings
@@ -116,6 +116,10 @@ def reconcile() -> str:
         sso_tools.sync_semaphore_members()   # staff project memberships, when Semaphore signs in through Keycloak
     except Exception as exc:  # noqa: BLE001 - never stops the device sync
         report.errors.append(f"Semaphore memberships: {exc}"[:300])
+    try:
+        report.errors.extend(paths.sync_all().errors)   # path test hosts on the customers' site collectors
+    except Exception as exc:  # noqa: BLE001 - never stops the device sync
+        report.errors.append(f"path tests: {exc}"[:300])
     _state["last_reconcile"] = time.strftime("%Y-%m-%d %H:%M:%S")
     # A full sync repairs what earlier sync jobs left undone, so their error is no longer open. Errors of
     # other jobs (compliance, GLPI changes) stay until their own job succeeds or fails again.

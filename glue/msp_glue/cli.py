@@ -10,6 +10,8 @@
   mspctl device sync [<code>]           sync devices to Zabbix and GLPI (all customers by default)
   mspctl --dry-run device sync [<code>] only report what device sync would change
   mspctl proxy add <code> <proxy-name>  register (or re-key) a customer-site Zabbix proxy and print its settings
+  mspctl paths list <code>              a customer's path test targets, collectors and Zabbix hosts
+  mspctl paths sync [<code>]            create or repair the path test hosts on the site collectors now
   mspctl user add <code> <login> ...    create a customer portal user (GLPI, and Grafana with --grafana)
   mspctl user disable <code> <login>    remove a customer user's access
   mspctl compliance                     open, update or solve configuration-drift tickets
@@ -32,7 +34,7 @@ import os
 import secrets
 import sys
 
-from . import bootstrap, chat, clients, compliance, customers, devices, tenants
+from . import bootstrap, chat, clients, compliance, customers, devices, paths, tenants
 from .http import APIError
 from .locking import exclusive
 from .settings import settings
@@ -174,10 +176,59 @@ def cmd_proxy(args) -> int:
     print("cat > .env <<'EOF'")
     print(f"ZBX_HOSTNAME={args.name}\nZBX_SERVER_HOST=<address of the Zabbix server, port 10051 reachable>\n"
           f"ZBX_TLSPSKIDENTITY={identity}\nEOF")
-    print(f"echo {psk} > zabbix_proxy.psk && chmod 640 zabbix_proxy.psk")
+    print(f"echo {psk} > zabbix_proxy.psk")
+    # The proxy runs as user zabbix (1997:1995) inside its container; the file must be its own and private.
+    print("sudo chown 1997:1995 zabbix_proxy.psk && sudo chmod 600 zabbix_proxy.psk")
     print("docker compose up -d")
     print("\n# Store the key in your password manager; Zabbix never shows it again.")
     return 0
+
+
+def cmd_paths(args) -> int:
+    if args.action == "sync":
+        if args.code:
+            tenant = tenants.get_tenant(args.code)
+            if not tenant:
+                print(f"Tenant '{args.code}' not found")
+                return 1
+            report = paths.sync_tenant(tenant)
+        else:
+            report = paths.sync_all()
+        print(f"Path tests: {report.summary()}")
+        for line in report.errors:
+            print(f"  error    {line}")
+        if args.verbose:
+            for kind in ("created", "updated", "disabled"):
+                for line in getattr(report, kind):
+                    print(f"  {kind:<8} {line}")
+        return 1 if report.errors else 0
+    tenant = tenants.get_tenant(args.code) if args.code else None
+    if not tenant:
+        print("Name a customer code: mspctl paths list acme")
+        return 1
+    targets, errors = paths.tenant_targets(tenant)
+    z = clients.zabbix()
+    found = paths.collectors(z, tenant)
+    print(f"Targets of {tenant.name} ({len(targets)}):")
+    for t in targets:
+        where = t.url or (f"{t.address}:{t.port}" if "tcp" in t.checks else t.address)
+        only = f"  only from {t.collector}" if t.collector else ""
+        print(f"  {t.segment:<12} {t.name:<34} {'+'.join(t.checks):<10} {where}{only}")
+    for line in errors:
+        print(f"  not used: {line}")
+    if not tenant.proxy_group:
+        print("No site collector: the customer uses the central proxies (set msp_proxy_group after 'mspctl proxy add').")
+    elif not found:
+        print(f"No collector registered in proxy group {tenant.proxy_group} yet ('mspctl proxy add {tenant.code} <name>').")
+    else:
+        states = {"0": "unknown", "1": "offline", "2": "online"}
+        print("Site collectors: " + ", ".join(f"{p['name']} ({states.get(str(p.get('state')), '?')})" for p in found))
+    hosts = paths.managed_path_hosts(z, tenant.code)
+    if hosts:
+        print(f"Zabbix path test hosts ({len(hosts)}):")
+        for h in sorted(hosts, key=lambda h: h["host"]):
+            print(f"  {'enabled ' if str(h['status']) == '0' else 'disabled'} {h['name']}")
+    return 1 if errors else 0
 
 
 def cmd_user(args) -> int:
@@ -310,6 +361,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("name")
     p.add_argument("--address", default="", help="address the server and agents use to reach this proxy")
 
+    pa = sub.add_parser("paths")
+    pa.add_argument("action", choices=["list", "sync"])
+    pa.add_argument("code", nargs="?", default="")
+
     u = sub.add_parser("user")
     u.add_argument("action", choices=["add", "disable"])
     u.add_argument("code")
@@ -356,10 +411,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         settings.dry_run = True
     handlers = {"check": cmd_check, "bootstrap": cmd_bootstrap, "tenant": cmd_tenant, "device": cmd_device,
-                "proxy": cmd_proxy, "user": cmd_user, "compliance": cmd_compliance, "serve": cmd_serve,
+                "proxy": cmd_proxy, "paths": cmd_paths, "user": cmd_user, "compliance": cmd_compliance, "serve": cmd_serve,
                 "sso": cmd_sso, "staff": cmd_staff, "console": cmd_console, "chat": cmd_chat}
     changes_tools = args.command in ("device", "proxy", "user", "compliance") or (
-        args.command == "tenant" and args.action != "list")
+        args.command in ("tenant", "paths") and args.action not in ("list",))
     try:
         if changes_tools:
             # Same lock as the running service, so a webhook and this command never collide.

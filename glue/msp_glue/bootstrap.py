@@ -505,6 +505,8 @@ def zabbix_baseline(webhook_token: str = "", glpi_ids: dict | None = None) -> No
         if before and not webhook_token:
             _restore_media_settings(z, before[0])
     _ensure_ticket_action(z, webhook_token, glpi_ids or {})
+    from .paths import ensure_templates   # here, not at the top: paths imports the device sync, which imports this
+    ensure_templates(z)
 
 
 MEDIA_SETTINGS = ("glpi_url", "glpi_public_url", "glpi_user_token", "glpi_app_token",
