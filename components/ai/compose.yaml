@@ -15,8 +15,9 @@ services:
       OLLAMA_KEEP_ALIVE: 10m           # free the memory 10 minutes after the last request
       OLLAMA_NUM_PARALLEL: "1"
       OLLAMA_MAX_LOADED_MODELS: "1"
-      # Model downloads go through the server's web proxy when there is one (the ai stage fills these in), and
-      # trust a TLS-inspecting proxy's certificate authority from ./certs as well as the usual ones.
+      # Model downloads come from registry.ollama.ai, which sends them on to *.r2.cloudflarestorage.com. They go
+      # through the server's web proxy when there is one (the ai stage fills these in), and trust a TLS-inspecting
+      # proxy's certificate authority from ./certs as well as the usual ones.
       HTTPS_PROXY: ${AI_HTTPS_PROXY:-}
       NO_PROXY: localhost,127.0.0.1
       SSL_CERT_DIR: /etc/ssl/certs:/usr/local/share/msp-ca

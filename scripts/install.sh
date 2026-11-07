@@ -1558,7 +1558,7 @@ stage_ai() {  # ai [model] | ai off: a language model on this server (Ollama) fo
   info "downloading $model into the volume ai_models (about 5 GB for 8 billion parameters; this can take a while)"
   dc exec -T ollama ollama pull "$model" >/dev/null ||
     fail "Ollama could not download $model" \
-      "check the name on ollama.com/library, and that this server reaches registry.ollama.ai (docker compose logs --tail 30 ollama)"
+      "check the name on ollama.com/library, and that this server reaches registry.ollama.ai and the storage it sends the download to, *.r2.cloudflarestorage.com (docker compose logs --tail 30 ollama)"
   ok "$model is on this server"
   set_env CONSOLE_AI_URL "http://ollama:11434/v1"
   set_env CONSOLE_AI_MODEL "$model"
