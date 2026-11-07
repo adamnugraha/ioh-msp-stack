@@ -129,7 +129,7 @@ def paths(code: str) -> dict:
         checks = [c for c, template in path_tests.CHECK_TEMPLATES.items()
                   if template in {t["host"] for t in h.get("parentTemplates", [])}]
 
-        def number(kind, scale=1000.0):
+        def number(kind, scale=1000.0, values=values):
             v = values.get(kind)
             try:
                 return round(float(v["value"]) * scale, 1) if v and v["value"] not in (None, "") else None
