@@ -8,6 +8,7 @@
 #   sudo ./scripts/autoinstall.sh start    install in the background (service ioh-msp-autoinstall)
 #   sudo ./scripts/autoinstall.sh status   how far it is; once finished, the first sign-in
 #   sudo ./scripts/autoinstall.sh tunnel   connect the Cloudflare Tunnel now (asks for its token)
+#                                          (WAY_IN=direct: no tunnel; browsers come straight to this server)
 #   sudo ./scripts/autoinstall.sh run      install in this terminal (what the service runs)
 #
 # Settings: /etc/ioh-msp/autoinstall.conf, or --config FILE (environments/autoinstall.conf.example
@@ -27,7 +28,7 @@ PASSWORD_FILE=$VAR_DIR/first-password
 SUMMARY=$VAR_DIR/first-sign-in.txt   # addresses and the first one-time password: root only
 LOG=/var/log/ioh-msp-autoinstall.log
 UNIT=ioh-msp-autoinstall
-STEPS=(apt account kit prepare settings dockerhub core proxy tunnel grafana sso console ssotools samples backup)
+STEPS=(apt account kit prepare settings dockerhub core sso gate dns proxy tunnel grafana console ssotools samples backup)
 ALWAYS="apt account kit prepare settings"   # cheap and safe to repeat, so a run after a fix repeats them
 VERSION=$(cat VERSION 2>/dev/null || echo "?")
 
@@ -72,10 +73,12 @@ title_of() {
     settings) echo "the installer's settings" ;;
     dockerhub) echo "Docker Hub log-in" ;;
     core) echo "the tools and their integration (20 to 45 minutes)" ;;
-    proxy) echo "HTTPS for every tool" ;;
+    sso) echo "staff sign-in (Keycloak)" ;;
+    gate) echo "the sign-in gate in front of the engineers' tools" ;;
+    dns) echo "DNS: every name points at this server (waits for your records)" ;;
+    proxy) if [ "$WAY_IN" = direct ]; then echo "HTTPS for every tool, with Let's Encrypt certificates"; else echo "HTTPS for every tool"; fi ;;
     tunnel) echo "the Cloudflare Tunnel" ;;
     grafana) echo "customer dashboards (Grafana)" ;;
-    sso) echo "staff sign-in (Keycloak)" ;;
     console) echo "the MSP Console" ;;
     ssotools) echo "staff sign-in to the tools" ;;
     samples) echo "sample customers to practise on (5 to 10 minutes)" ;;
@@ -85,7 +88,8 @@ title_of() {
 enabled() {
   case "$1" in
     dockerhub) [ -n "$DOCKERHUB_USER" ] ;;
-    tunnel) [ -n "$CLOUDFLARE_TUNNEL_TOKEN" ] ;;
+    gate | dns) [ "$WAY_IN" = direct ] ;;
+    tunnel) [ "$WAY_IN" != direct ] && [ -n "$CLOUDFLARE_TUNNEL_TOKEN" ] ;;
     grafana) [ "$GRAFANA" = yes ] ;;
     ssotools) [ "$SSO_TOOLS" = yes ] ;;
     samples) [ "$SAMPLES" = yes ] ;;
@@ -100,7 +104,7 @@ load_conf() {  # the settings, read and checked by scripts/autoinstall-settings.
     "copy environments/autoinstall.conf.example to $CONF, fill it in, then: sudo $KIT_DIR/scripts/autoinstall.sh start"
   chmod 600 "$CONF"
   ENVIRONMENT="" DOMAIN="" STAFF_EMAIL="" STAFF_NAME="" NOC_EMAIL="" TIMEZONE="" SUBNET="" POOL=""
-  SSH_FROM="" ADMIN_NETWORKS="" PROXY="" PROXY_CA="" CLOUDFLARE_TUNNEL_TOKEN="" SAMPLES="" SSO_TOOLS=""
+  SSH_FROM="" ADMIN_NETWORKS="" PROXY="" PROXY_CA="" WAY_IN="" CLOUDFLARE_TUNNEL_TOKEN="" PUBLIC_ADDRESS="" SAMPLES="" SSO_TOOLS=""
   GRAFANA="" BACKUP="" DOCKERHUB_USER="" DOCKERHUB_TOKEN="" INSTALL_USER=""
   local pairs key value
   pairs=$(mktemp)
@@ -208,18 +212,23 @@ step_prepare() {
     fail "the server preparation stopped (its reason and fix are above)" "do what the Fix line above says"
 }
 step_settings() {
-  local admin listen
+  local args=(settings --domain "$DOMAIN" --subnet "$SUBNET" --tz "$TIMEZONE") admin
+  if [ -n "$NOC_EMAIL" ]; then args+=(--email "$NOC_EMAIL"); fi
   if [ "$ENVIRONMENT" = ioh ]; then
-    admin=$ADMIN_NETWORKS listen=0.0.0.0
+    admin=$ADMIN_NETWORKS
     # With a tunnel on this server as well, its visitors arrive from the platform network's first address.
     if [ -n "$CLOUDFLARE_TUNNEL_TOKEN" ]; then admin="$admin $(first_address "$SUBNET")"; fi
+    args+=(--way-in ioh --admin-networks "$admin")
+  elif [ "$WAY_IN" = direct ]; then
+    # Straight from the Internet: ports 80 and 443 open, Let's Encrypt certificates, the sign-in gate
+    # in front of the engineers' tools (environments/direct-access.md). Port 10051 stays on this server.
+    args+=(--way-in direct --letsencrypt-email "${NOC_EMAIL:-$STAFF_EMAIL}")
+    if [ -n "$ADMIN_NETWORKS" ]; then args+=(--admin-networks "$ADMIN_NETWORKS"); fi
+    if [ -n "$PUBLIC_ADDRESS" ]; then args+=(--public-address "$PUBLIC_ADDRESS"); fi
   else
-    # Outside IOH the Cloudflare Tunnel is the only way in: ports 80, 443 and 10051 stay on this server.
-    admin=$(first_address "$SUBNET") listen=127.0.0.1
+    # The Cloudflare Tunnel is the only way in: ports 80, 443 and 10051 stay on this server.
+    args+=(--way-in cloudflare)
   fi
-  local args=(settings --domain "$DOMAIN" --subnet "$SUBNET" --admin-networks "$admin"
-              --web-listen "$listen" --collectors-listen "$listen" --tz "$TIMEZONE")
-  if [ -n "$NOC_EMAIL" ]; then args+=(--email "$NOC_EMAIL"); fi
   installer "${args[@]}"
 }
 step_dockerhub() {
@@ -228,6 +237,12 @@ step_dockerhub() {
   ok "logged in to Docker Hub as $DOCKERHUB_USER"
 }
 step_core() { installer; }
+step_gate() { installer gate; }
+step_dns() {
+  # Let's Encrypt checks every name over the Internet, so the records come first: create them as soon
+  # as the create script shows the address. The wait ends as soon as they are right, after 24 hours at most.
+  installer dns --wait 1440
+}
 step_proxy() { installer proxy; }
 step_grafana() { installer grafana; }
 step_console() { installer console; }
@@ -308,9 +323,13 @@ connect_tunnel() {  # connect_tunnel TOKEN [again]: run cloudflared as a service
 
 # ------------------------------------------------------------------ summary
 write_summary() {
-  local pw tunnel samples
+  local pw tunnel samples address
   pw=$(cat "$PASSWORD_FILE" 2>/dev/null || true)
-  if systemctl is-active --quiet cloudflared 2>/dev/null; then tunnel="connected (the cloudflared service runs)"
+  if [ "$WAY_IN" = direct ]; then
+    address=$(sed -n 's/^PUBLIC_ADDRESS=//p' "$KIT_DIR/.env" 2>/dev/null | tr -d '"')
+    [ -n "$address" ] || address="the server's public address"
+    tunnel="straight to $address (ports 80 and 443), certificates from Let's Encrypt"
+  elif systemctl is-active --quiet cloudflared 2>/dev/null; then tunnel="connected (the cloudflared service runs)"
   elif [ "$ENVIRONMENT" = ioh ]; then tunnel="none: browsers reach the server through IOH's network and DNS"
   else tunnel="not connected yet: sudo $KIT_DIR/scripts/autoinstall.sh tunnel (asks for the token)"; fi
   if [ "$SAMPLES" = yes ]; then samples="on: PT ACME Retail Indonesia and PT Bank Contoh Tbk (off: ./scripts/install.sh samples off)"
@@ -323,6 +342,9 @@ write_summary() {
       if [ -n "$pw" ]; then
         printf '  First sign-in %s with the one-time password %s\n' "$STAFF_EMAIL" "$pw"
         printf '                (Keycloak then asks for your own password; add an authenticator app after)\n'
+        if [ "$WAY_IN" = direct ]; then
+          printf '                The sign-in gate asks first, with the same account; once a day per browser.\n'
+        fi
       else
         printf '  First sign-in %s (account made earlier; a new one-time password:\n' "$STAFF_EMAIL"
         printf '                sudo -iu %s, then cd %s && docker compose exec msp-glue mspctl staff reset %s)\n' "$INSTALL_USER" "$KIT_DIR" "$STAFF_EMAIL"
@@ -331,7 +353,12 @@ write_summary() {
       printf '                https://semaphore.%s  https://git.%s  https://glue.%s/healthz\n' "$DOMAIN" "$DOMAIN" "$DOMAIN"
       printf '  Passwords     every administrator password is in %s/.env: copy that file into the\n' "$KIT_DIR"
       printf '                password manager now (sudo cat %s/.env, then clear the screen)\n' "$KIT_DIR"
-      printf '  Tunnel        %s\n' "$tunnel"
+      if [ "$WAY_IN" = direct ]; then
+        printf '  Way in        %s\n' "$tunnel"
+        printf "                the sign-in gate stands in front of the engineers' tools\n"
+      else
+        printf '  Tunnel        %s\n' "$tunnel"
+      fi
       printf '  Sample data   %s\n' "$samples"
       if [ "$BACKUP" = yes ]; then printf '  Backups       every night at 00:15 to /var/backups/msp\n'; fi
       printf '  Work on it    sudo -iu %s, then cd %s (the kit and its commands belong to that account)\n' "$INSTALL_USER" "$KIT_DIR"
@@ -456,7 +483,7 @@ cmd_status() {
         printf '  ....   interrupted at step %s (the server restarted?)\n' "$(status_value step)"
         info "It continues at the next start of the server, or now: sudo $KIT_DIR/scripts/autoinstall.sh start"
       fi
-      if [ -r "$LOG" ]; then printf '\n  Last lines of %s:\n' "$LOG"; tail -n 8 "$LOG" | sed 's/^/    /'; fi ;;
+      if [ -r "$LOG" ]; then printf '\n  Last lines of %s:\n' "$LOG"; tail -n 14 "$LOG" | sed 's/^/    /'; fi ;;
     stopped)
       printf '  %sSTOPPED%s at step %s (%s)\n' "$R" "$N" "$(status_value step)" "$(status_value since)"
       if [ -r "$LOG" ]; then printf '\n  The end of %s, with the reason and the fix:\n' "$LOG"; tail -n 25 "$LOG" | sed 's/^/    /'; fi
@@ -470,6 +497,11 @@ cmd_status() {
 
 cmd_tunnel() {
   local token=""
+  if [ -r "$CONF" ]; then
+    load_conf
+    [ "$WAY_IN" != direct ] || fail "the settings say WAY_IN=direct: browsers come straight to this server, without a tunnel" \
+      "to use a tunnel instead, follow environments/direct-access.md, \"Changing the way in\""
+  fi
   if [ -t 0 ]; then
     printf 'Cloudflare tunnel token (the long string after "cloudflared service install"; input hidden): '
     IFS= read -rs token

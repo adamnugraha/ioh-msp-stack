@@ -3,20 +3,26 @@
 One virtual private server (VPS) with a public address, from a local provider or an international
 one. There is usually no network firewall in front of it, so the server's own settings do the
 protecting: its firewall for SSH, and the kit's listen settings for the ports Docker publishes.
-Browsers reach the tools through a Cloudflare Tunnel. Use it for trials, with the sample customers or
+Browsers reach the tools through a Cloudflare Tunnel, or straight from the Internet at the server's own
+address without Cloudflare ([../direct-access.md](../direct-access.md)). Use it for trials, with the sample customers or
 IOH's own test equipment: customers' data belongs on IOH's servers unless IOH approves otherwise.
 
 ## Automatic install
 
-The whole platform with one script, after the Cloudflare side is ready (once per domain:
-[../cloudflare-tunnel.md](../cloudflare-tunnel.md), sections 3 and 4; keep the tunnel's token).
-Fill in a copy of [../autoinstall.conf.example](../autoinstall.conf.example), then turn it into the
-start script, in any Linux or macOS shell with the kit (or in the install guide, choice "Automatic",
-which writes the same script for you):
+The whole platform with one script. With a Cloudflare Tunnel, prepare the Cloudflare side first (once
+per domain: [../cloudflare-tunnel.md](../cloudflare-tunnel.md), sections 3 and 4; keep the tunnel's
+token). Fill in a copy of [../autoinstall.conf.example](../autoinstall.conf.example), then turn it into
+the start script, in any Linux or macOS shell with the kit (or in the install guide, choice
+"Automatic", which writes the same script for you):
 
 ```bash
 ./environments/bootstrap.sh my.conf ENVIRONMENT=vps SSH_FROM="<your address>/32" > msp-autoinstall.sh
 ```
+
+**Without Cloudflare:** `WAY_IN=direct` in `my.conf` and no token. In the provider's panel, allow ports
+80 and 443 from anywhere if it has a firewall, and point `*.<domain>` at the server's address at your
+DNS provider as soon as you know the address: the install waits for that record before HTTPS
+([../direct-access.md](../direct-access.md)).
 
 Then either give `msp-autoinstall.sh` to the provider as user data (cloud-init) when you order the
 server, or run it on the new server as root:
@@ -27,7 +33,8 @@ ssh root@<server address> 'bash -s' < msp-autoinstall.sh
 
 The server installs everything by itself in 40 to 75 minutes. How far it is, and once finished the
 first sign-in: `sudo /opt/ioh-msp-stack/scripts/autoinstall.sh status` on the server. To rebuild,
-reinstall the VPS with Ubuntu 24.04 in the provider's panel and run the same script again.
+reinstall the VPS with Ubuntu 24.04 in the provider's panel and run the same script again; the
+server keeps its address, so a DNS record for direct access stays right.
 
 ## Steps
 
@@ -37,8 +44,9 @@ reinstall the VPS with Ubuntu 24.04 in the provider's panel and run the same scr
      60 GB work, more slowly.
    - A data centre close to the users: Jakarta, or else Singapore.
    - Your SSH public key, if the order form asks for one.
-   - If the provider's panel has a firewall: allow inbound TCP 22 from your own address only, and
-     nothing else. The tunnel connects out and needs no inbound port.
+   - If the provider's panel has a firewall: allow inbound TCP 22 from your own address only. With a
+     tunnel, nothing else: it connects out and needs no inbound port. With direct access, also TCP 80
+     and 443 from anywhere.
 
 2. **Connect** with the address and account the provider gives you (often `root`):
 
@@ -63,7 +71,7 @@ reinstall the VPS with Ubuntu 24.04 in the provider's panel and run the same scr
 4. **Prepare the server.**
 
    ```bash
-   curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.4.0.zip
+   curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.5.0.zip
    sha256sum /tmp/ioh-msp-stack.zip      # must equal the line for this file in dist/SHA256SUMS
    command -v unzip >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y unzip)
    sudo mkdir -p /opt/ioh-msp-stack && sudo chown "$(id -un):" /opt/ioh-msp-stack
@@ -78,7 +86,9 @@ reinstall the VPS with Ubuntu 24.04 in the provider's panel and run the same scr
    If the provider gives the server a private network too, check that neither 172.31.0.0/16 nor
    172.30.0.0/24 is part of it (`ip route` lists the networks; the preflight check refuses an overlap).
 
-5. **Install.**
+5. **Install.** With direct access, follow [../direct-access.md](../direct-access.md), section 3,
+   instead of steps 5 to 7: the same stages, in the order that puts the sign-in gate first. With the
+   Cloudflare Tunnel:
 
    ```bash
    cd /opt/ioh-msp-stack
@@ -110,8 +120,9 @@ reinstall the VPS with Ubuntu 24.04 in the provider's panel and run the same scr
 
 ## Day to day
 
-- **Check what is open** from another machine: `nc -vz <server address> 443` should fail, and
-  `sudo ss -ltnp | grep -E ':(80|443|10051) '` on the server should show `127.0.0.1` only.
+- **Check what is open** from another machine. With a tunnel, `nc -vz <server address> 443` should fail,
+  and `sudo ss -ltnp | grep -E ':(80|443|10051) '` on the server should show `127.0.0.1` only. With
+  direct access, 80 and 443 answer on every address and 10051 on `127.0.0.1` only.
 - **E-mail.** Many providers block outgoing port 25. GLPI's notifications and
   `./scripts/install.sh chat email` need a mail service on port 587 or 465.
 - **A collector at a customer site** connects to port 10051: allow it in the provider's firewall from
@@ -120,5 +131,6 @@ reinstall the VPS with Ubuntu 24.04 in the provider's panel and run the same scr
   every collector still needs its own pre-shared key, but keep such a VPS for trials.
 - **Backups.** `sudo ./scripts/backup.sh` works as everywhere; copy `/var/backups/msp` off the server.
 
-When the trial ends, cancel the server with the provider, and delete the tunnel (Networking, Tunnels)
-and the Access application (Zero Trust, Access) in Cloudflare.
+When the trial ends, cancel the server with the provider. With a tunnel, delete the tunnel (Networking,
+Tunnels) and the Access application (Zero Trust, Access) in Cloudflare; with direct access, the DNS
+record.

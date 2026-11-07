@@ -1,0 +1,60 @@
+# Sign-in gate (oauth2-proxy), for a platform that browsers reach straight from the Internet, without a
+# Cloudflare Tunnel. Caddy asks it about every request to an engineers' tool (forward_auth in the
+# Caddyfile): a browser that has not signed in goes to Keycloak first, and only staff with one of the
+# roles msp-manager, msp-engineer or msp-automation get through. One sign-in covers every name under the
+# domain for 8 hours. ./scripts/install.sh gate creates its Keycloak client (msp-gate) and switches it on.
+services:
+  oauth2-proxy:
+    # Optional: started only when COMPOSE_PROFILES in .env lists "gate" (./scripts/install.sh gate adds it).
+    profiles: ["gate"]
+    image: ${GATE_IMAGE:-quay.io/oauth2-proxy/oauth2-proxy:v7.15.5-alpine}
+    restart: unless-stopped
+    command:
+      - --http-address=0.0.0.0:4180
+      - --reverse-proxy=true
+      - --trusted-proxy-ip=${MSP_SUBNET:-172.30.0.0/24}
+      - --provider=oidc
+      - --client-id=msp-gate
+      # Browsers sign in at Keycloak's public name; the gate itself talks to Keycloak inside the platform
+      # network, so the server never has to reach its own public address.
+      - --oidc-issuer-url=https://sso.${MSP_DOMAIN}/realms/msp
+      - --skip-oidc-discovery=true
+      - --login-url=https://sso.${MSP_DOMAIN}/realms/msp/protocol/openid-connect/auth
+      - --redeem-url=http://keycloak:8080/realms/msp/protocol/openid-connect/token
+      - --oidc-jwks-url=http://keycloak:8080/realms/msp/protocol/openid-connect/certs
+      - --code-challenge-method=S256
+      # Exactly these scopes: with --allowed-group the gate would also ask for "groups", which Keycloak refuses.
+      - --scope=openid email profile
+      - --skip-provider-button=true
+      # Who gets through: a staff role in the "roles" claim (the client's realm roles mapper).
+      - --oidc-groups-claim=roles
+      - --allowed-group=msp-manager
+      - --allowed-group=msp-engineer
+      - --allowed-group=msp-automation
+      - --email-domain=*
+      # The sign-in cookie: valid for every name under the domain, small (no tokens inside), 8 hours.
+      - --cookie-name=_msp_gate
+      - --cookie-domain=.${MSP_DOMAIN}
+      - --whitelist-domain=.${MSP_DOMAIN}
+      - --cookie-secure=true
+      - --cookie-samesite=lax
+      - --cookie-expire=8h
+      - --session-cookie-minimal=true
+      - --upstream=static://202
+      - --footer=-
+      - --silence-ping-logging=true
+    environment:
+      OAUTH2_PROXY_CLIENT_SECRET: ${KEYCLOAK_GATE_CLIENT_SECRET:-}
+      OAUTH2_PROXY_COOKIE_SECRET: ${GATE_COOKIE_SECRET:-}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4180/ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [msp]
+
+networks:
+  msp:
+    external: true
+    name: msp

@@ -3,7 +3,8 @@
 On Google Cloud, AWS or a VPS there is no NOC network in front of the platform. Engineers and
 customers reach it through a Cloudflare Tunnel instead: a small program (`cloudflared`) on the
 platform server connects out to Cloudflare, so the server needs no open web port, and Cloudflare
-Access asks engineers who they are before anything reaches the tools.
+Access asks engineers who they are before anything reaches the tools. The other way in, without
+Cloudflare: [direct-access.md](direct-access.md).
 
 ## 1. The domain
 

@@ -14,6 +14,7 @@ from open-source tools only:
 | Customer dashboards (phase 3) | Grafana OSS 13 with the Zabbix plugin | AGPL 3.0 / Apache 2.0 |
 | Single sign-on for staff | Keycloak 26 | Apache 2.0 |
 | Chat alerts to Telegram, Microsoft Teams or e-mail | Versus Incident 1.4 | MIT |
+| Language model on the server for report text and Investigate (optional) | Ollama 0.40 with an open-weight model (Qwen3 8B by default) | MIT (Ollama), Apache 2.0 (Qwen3) |
 
 Phases follow the build plan in the guide: the core tools go in first, then the reverse proxy, then
 single sign-on, the MSP Console and chat alerts, and Grafana in phase 3. Tested versions: Nautobot
@@ -46,6 +47,17 @@ that reads the console's own JSON interface (`/api/v1`):
   Forgejo, Golden Config's rule-by-rule results (secrets masked), tickets, runs and maintenance.
 * **Service levels** for managers: availability against target, breaches, mean time to resolve,
   compliance and backups, this month or the two before, with a CSV export.
+* **Path tests** (from 1.6.0), per customer: delay, loss and response time from each site collector to
+  IOH's edge router at the site, public reference points on the internet and the customer's
+  applications, and a verdict on which side a slowdown is on: IOH's link to the site, beyond IOH's
+  edge, or the application provider.
+* **Link capacity** (from 1.6.0), on the customer and operations pages: each circuit's busy hour
+  against its commit rate in Nautobot, with a four-week trend and the days left before 80 %. msp-glue
+  forecasts it every night and opens one GLPI ticket per link at risk.
+* **Monthly reports** (from 1.6.0): on the first night of each month the console drafts last month's
+  report for every customer, in Bahasa Indonesia or English, from the tools' figures. The text comes
+  from the console's model (fixed sentences without one); every number the data lacks is flagged; an
+  engineer or manager corrects and approves the draft, then prints it for the customer.
 * **Actions**, each checked against the person's roles and written to the audit trail before it
   runs: acknowledge a problem (the note reaches the GLPI ticket), open a ticket, raise a GLPI change
   with its window, risk and back-out plan, plan Zabbix maintenance (regulated customers need a
@@ -80,28 +92,33 @@ components/                  one compose file per tool, so tools can be split ac
   zabbix/ glpi/ semaphore/ forgejo/ glue/
   proxy/                     Caddy reverse proxy with TLS and network access rules (profile "proxy")
   keycloak/                  single sign-on for staff (profile "sso")
+  gate/                      the sign-in gate for direct access, oauth2-proxy (profile "gate")
   versus/                    chat alerts: settings and message templates (profile "chat")
   grafana/                   phase 3 (profile "grafana")
+  ai/                        Ollama, a language model on the server's processor (profile "ai", from 1.6.0)
 edge-collector/              Zabbix proxy for a customer site (pre-shared key, outbound only)
 glue/                        msp-glue source: Python package, Dockerfile, mappings.yaml, unit tests;
                              msp_glue/console/ is the MSP Console (profile "console")
 glue/console-ui/             the MSP Console front end from 1.2 on (React, TypeScript, shadcn/ui) and its
                              preview with sample data; see its README
 branding/                    your logo for the console (the file stays out of Git; see its README)
-.github/workflows/           image builds: build, scan with Trivy, push to Docker Hub
+.github/workflows/           image builds (build, scan with Trivy, push to Docker Hub), and the path test
+                             templates tested against a real Zabbix 7.0 with lab/check_paths.py
 zabbix/media/                Zabbix webhooks "GLPI MSP" and "Versus chat" (JavaScript sources, importable YAML)
+zabbix/templates/            the path test templates msp-glue imports into Zabbix (from 1.6.0)
 golden-config/               starter content of the shared Golden Config Git repository
 semaphore/playbooks/         starter content of the shared playbook Git repository
 grafana/                     customer dashboard template
 scripts/                     prepare-server.sh (Docker, address pool, firewall), install.sh (the installer),
                              autoinstall.sh (everything at once, unattended) and its settings reader,
-                             add-customer-secrets.sh, gen-env.sh, backup.sh, build-mediatype.py
+                             sso-gate.py (the gate's Keycloak client), add-customer-secrets.sh, gen-env.sh,
+                             backup.sh, build-mediatype.py
 tenants/README.md            how customer secrets are stored (in secrets/, never in Git)
 lab/                         simulated devices, sample data, run-lab.sh and check.py (the sample
                              customers of install.sh samples come from here too)
 environments/                where the server runs: Google Cloud and AWS (a script creates the server),
-                             a VPS, IOH's private cloud; the Cloudflare Tunnel as the way in outside IOH;
-                             the automatic install's settings file and bootstrap.sh
+                             a VPS, IOH's private cloud; the two ways in outside IOH (a Cloudflare Tunnel,
+                             or direct access); the automatic install's settings file and bootstrap.sh
 VERSION                      the kit's version
 ```
 
@@ -126,7 +143,7 @@ The two images the kit builds itself, and the console preview, are published to
 
 | Tag | What it is |
 |---|---|
-| `glue-1.2.0`, `glue-1.2` | msp-glue and the MSP Console, with the console's pages built in |
+| `glue-1.3.0`, `glue-1.3` | msp-glue and the MSP Console, with the console's pages built in (kit 1.6.0) |
 | `nautobot-3.2.6-gc3.0.8` | Nautobot with the Golden Config and Nornir apps |
 | `console-preview` | the new console with made-up sample data; connects to nothing |
 
@@ -138,8 +155,8 @@ To use the published images instead of building on the server, pull and name the
 compose files expect, then start as usual:
 
 ```bash
-docker pull adityanugraha/ioh-msp-stack:glue-1.2.0
-docker tag adityanugraha/ioh-msp-stack:glue-1.2.0 msp/glue:1.2
+docker pull adityanugraha/ioh-msp-stack:glue-1.3.0
+docker tag adityanugraha/ioh-msp-stack:glue-1.3.0 msp/glue:1.3
 docker pull adityanugraha/ioh-msp-stack:nautobot-3.2.6-gc3.0.8
 docker tag adityanugraha/ioh-msp-stack:nautobot-3.2.6-gc3.0.8 msp/nautobot:3.2.6-gc3.0.8
 ```
@@ -158,7 +175,7 @@ from an empty server to the first customer, with your own values filled in.
 This section describes a server in IOH's private cloud. For a trial on Google Cloud, AWS or a VPS
 from any provider, follow [environments/](environments/README.md) instead: a script there creates the
 server in the cloud, and the steps use the same installer with a few other values (no web proxy, the
-cloud's firewall, and a Cloudflare Tunnel as the way in). There, one settings file and one command can
+cloud's firewall, and a Cloudflare Tunnel or direct access as the way in). There, one settings file and one command can
 also do everything at once (`scripts/autoinstall.sh`, "Automatic install"), which makes a rebuild two
 commands.
 
@@ -166,7 +183,7 @@ Each version of the kit is published as a zip in the `dist` folder of this repos
 SHA-256 checksum in `dist/SHA256SUMS`. On the server (`wget -O` works the same as `curl -o`):
 
 ```bash
-curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.4.0.zip
+curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.6.0.zip
 sha256sum /tmp/ioh-msp-stack.zip      # must equal the line for this file in dist/SHA256SUMS
 command -v unzip >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y unzip)
 sudo mkdir -p /opt/ioh-msp-stack && sudo chown "$(id -un):" /opt/ioh-msp-stack
@@ -204,6 +221,7 @@ Then, from `/opt/ioh-msp-stack` and without sudo:
 ./scripts/install.sh sso --admin-email you@ioh.co.id --name "Your Name"   # Keycloak and the first administrator
 ./scripts/install.sh console                       # the MSP Console on https://console.<domain>
 ./scripts/install.sh sso-tools                     # staff sign in to Nautobot, Zabbix, Semaphore, Forgejo, Grafana with Keycloak
+./scripts/install.sh gate                          # direct access: the sign-in gate in front of the engineers' tools
 ./scripts/install.sh chat telegram                 # chat alerts (or: chat teams, chat email, chat test, chat off)
 ./scripts/install.sh grafana                       # phase 3: customer dashboards
 ./scripts/install.sh samples                       # optional: two made-up customers to practise on
@@ -215,6 +233,9 @@ every network, as IOH's network needs. `127.0.0.1` keeps a port on the server it
 ports when a Cloudflare Tunnel on the server is the way in, and for 10051 when no collector connects
 from outside. Docker's published ports bypass the server's firewall (ufw), so these settings are what
 closes them. On a running platform, `docker compose up -d proxy zabbix-server` applies a change.
+`--way-in ioh`, `cloudflare` or `direct` sets both, `ADMIN_NETWORKS` and the certificates the way each
+way in needs them; [environments/direct-access.md](environments/direct-access.md) explains the third,
+for a server that browsers reach straight from the Internet (Let's Encrypt and the sign-in gate).
 
 `sso` starts Keycloak, creates the realm `msp` with the three roles and the console's client, and
 with `--admin-email` the first administrator; it prints a one-time password that Keycloak replaces
@@ -306,6 +327,35 @@ From 1.3.0 to 1.4.0, unpack and that is all: 1.4.0 adds the automatic install
 (`scripts/autoinstall.sh`, `environments/bootstrap.sh` and `--autoinstall` in the create scripts) and
 changes nothing on a platform that is already installed.
 
+From 1.4.0 to 1.5.0, unpack, then `docker compose up -d proxy`: Caddy picks up its new rules, which work
+as before while `STAFF_GATE` is off (the default). 1.5.0 adds direct access, the way in without
+Cloudflare ([environments/direct-access.md](environments/direct-access.md)): `settings --way-in`, the
+`gate` stage and `dns`, `WAY_IN=direct` in the automatic install, and `--way-in direct` in the create
+scripts, which keep a fixed address. The delete scripts now keep that address for a rebuild;
+`--release-address` releases it. The images are still 1.2.0's.
+
+From 1.5.0 to 1.6.0, after backing up and unpacking:
+
+```bash
+./scripts/install.sh images      # msp-glue 1.3: path tests, capacity forecast, monthly reports
+./scripts/install.sh platform    # new Nautobot fields (msp_path_targets, msp_report_language), the path test templates in Zabbix
+./scripts/install.sh glue        # msp-glue with the templates and the console's data folder mounted
+./scripts/install.sh console     # the console's new pages (skip it if you do not run the console yet)
+./scripts/install.sh ai          # optional: a language model on this server for the report text (about 6 GB of memory)
+```
+
+What changes: every customer with a site collector gets path test hosts in Zabbix within ten minutes
+(four default targets per collector: two internet reference points, Microsoft 365 and Google; add IOH's
+edge router at each site in the tenant field `msp_path_targets`, see `edge-collector/README.md`). They
+never open tickets and never count as downtime. The first night after the upgrade, msp-glue forecasts
+every link that ends a circuit in Nautobot and opens a GLPI ticket ("Managed infrastructure > Capacity
+warning") for each one already above 80 % at its busy hour or on course to get there within 45 days;
+`capacity.tickets: false` in `glue/mappings.yaml` stops the tickets. The first monthly drafts appear on
+the first night of next month, or at once with "Draft now" on the Monthly reports page. `mspctl proxy
+add` now prints the right owner for the collector's key file; an existing collector whose log says it
+cannot read `zabbix_proxy.psk` needs `sudo chown 1997:1995 zabbix_proxy.psk && sudo chmod 600
+zabbix_proxy.psk` and a restart.
+
 The guide's build tab lists the same work as manual steps, for anyone who wants to see or repeat a
 single step by hand.
 
@@ -351,6 +401,9 @@ docker compose exec msp-glue mspctl tenant sync acme      # provision or repair 
 docker compose exec msp-glue mspctl -v device sync acme   # push one customer's devices again, with details
 docker compose exec msp-glue mspctl --dry-run device sync acme   # only report what would change
 docker compose exec msp-glue mspctl proxy add acme proxy-acme-01   # register a site proxy (again = new key)
+docker compose exec msp-glue mspctl paths list acme       # a customer's path test targets, collectors and Zabbix hosts
+docker compose exec msp-glue mspctl paths sync acme       # create or repair them now (the reconcile does it every 10 minutes)
+docker compose exec msp-glue mspctl capacity acme --no-tickets   # link capacity forecast now, without opening tickets
 docker compose exec msp-glue mspctl bootstrap platform    # re-apply the shared baseline (keeps webhook settings)
 docker compose exec msp-glue mspctl user add acme budi@acme.example --name "Budi Santoso" --grafana
 docker compose exec msp-glue mspctl user disable acme budi@acme.example
@@ -364,6 +417,7 @@ docker compose exec msp-glue mspctl chat test             # one test message to 
 docker compose exec msp-glue mspctl sso sync              # Semaphore project memberships from the Keycloak roles, now
 docker compose logs -f msp-glue                           # what msp-glue is doing
 docker compose logs -f msp-console versus-incident        # the console and the chat alerts
+docker compose exec ollama ollama list                    # the language model on this server (with ./scripts/install.sh ai)
 ./scripts/add-customer-secrets.sh acme                    # device log-in and SNMP secrets of a new customer
 ./scripts/install.sh status                               # installation stages done, certificates in use
 sudo ./scripts/backup.sh                                  # nightly backup (cron, as root)
@@ -379,7 +433,12 @@ kit creates); without it Semaphore would run the playbook on all of the customer
 After editing `glue/mappings.yaml` or the msp-glue code, rebuild or restart it:
 `docker compose build msp-glue && docker compose up -d msp-glue msp-console`.
 
-## Known issues found during testing (October 2026)
+## Known issues found during testing (October and November 2026)
+
+* Zabbix's own templates tag themselves `target` (for example `target: icmp`), and a host tag of the same
+  name ends up on the same problem as a second value. The path test hosts name theirs `path_target`.
+* Zabbix accepts only version 4 UUIDs in a template file; `zabbix/templates/msp_path_tests.yaml` uses
+  fixed ones of that form, so an import updates the templates instead of duplicating them.
 
 * scrapli 2026.10.3 (released 3 October 2026) breaks nornir-scrapli and every Golden Config job.
   `components/nautobot/requirements.txt` pins `scrapli<2026.10`.

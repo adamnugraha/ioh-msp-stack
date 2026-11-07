@@ -161,3 +161,46 @@ chat:
   # Wait this long before the first message: a problem that clears by itself within it never reaches the
   # chat, and the message can already name the GLPI ticket. 0 sends at once; otherwise 1m or more.
   delay: 1m
+
+path_tests:
+  # Path tests from each site collector (kit 1.6.0): msp-glue keeps one Zabbix host per collector and target,
+  # monitored by that collector. Every customer gets the targets below; a customer adds its own in the Nautobot
+  # tenant field msp_path_targets (a JSON list, see the guide), for example IOH's edge router at its site.
+  # Segments: ioh (IOH's edge router at the site), internet (a public point beyond IOH), application (what the
+  # customer uses). The console compares them to say on which side of the path a slowdown is.
+  # Checks: icmp (ping), tcp (open a connection to port), https (one web request to url).
+  defaults:
+    - {name: "Internet reference (Cloudflare)", address: 1.1.1.1, segment: internet, checks: [icmp]}
+    - {name: "Internet reference (Google)", address: 8.8.8.8, segment: internet, checks: [icmp]}
+    - {name: "Microsoft 365", url: "https://outlook.office365.com/", segment: application, checks: [https]}
+    - {name: "Google services", url: "https://www.google.com/generate_204", segment: application, checks: [https]}
+  # Limits for every target; a target can set its own (rtt_ms, loss_percent, http_ms).
+  limits:
+    rtt_ms: 150          # delay (ping or connection time), average over 15 minutes
+    loss_percent: 5      # packet loss, average over 15 minutes
+    http_ms: 2000        # web response time, average over 30 minutes
+  interval: 1m           # ping and connection checks
+  http_interval: 5m      # web requests
+
+capacity:
+  # Link capacity early warning (kit 1.6.0). Once a day msp-glue reads the busy-hour traffic of every interface that
+  # ends a circuit in Nautobot (Zabbix hourly averages), compares it with the circuit's commit rate (the interface
+  # speed when the circuit has none) and forecasts when it reaches warn_percent.
+  warn_percent: 80
+  history_days: 28       # days of traffic the forecast is drawn from
+  min_days: 14           # fewer days of data than this: no forecast yet
+  horizon_days: 45       # a link forecast to reach warn_percent within this many days is "at risk"
+  # One GLPI ticket per link at risk or already above warn_percent, in the customer's entity, for the NOC group.
+  tickets: true
+  ticket_category: "Managed infrastructure > Capacity warning"
+  hour: 3                # local hour of the daily run
+
+reports:
+  # Monthly customer report (kit 1.6.0): on the first days of each month the MSP Console drafts last month's
+  # report for every customer; an engineer checks it and approves it before it goes to the customer. The text is
+  # written by the console's model endpoint (CONSOLE_AI_URL and CONSOLE_AI_MODEL in .env) when one is set, and
+  # from fixed sentences when not. Every figure comes from the tools; the console flags any number in the text
+  # that the data does not contain.
+  draft_day: 1           # drafts are made from this day of the month
+  hour: 2                # local hour, so the model works at night
+  default_language: id   # id = Bahasa Indonesia, en = English; per customer: tenant field msp_report_language

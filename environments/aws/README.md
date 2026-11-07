@@ -1,22 +1,25 @@
 # Amazon Web Services
 
 One EC2 instance in Jakarta (`ap-southeast-3`), in the Region's default network, behind a security
-group that lets in SSH from your own address and nothing else. Browsers reach the tools through a
-Cloudflare Tunnel. Use it for trials, with the sample customers or IOH's own test equipment:
+group that lets in SSH from your own address, and with direct access the web on ports 80 and 443.
+Browsers reach the tools through a Cloudflare Tunnel, or straight from the Internet without Cloudflare
+([../direct-access.md](../direct-access.md)). Use it for trials, with the sample customers or IOH's own test equipment:
 customers' data belongs on IOH's servers unless IOH approves otherwise.
 
 **Cost** (list prices in October 2026; check the current ones in the AWS Pricing Calculator):
 m7i-flex.xlarge (4 vCPU, 16 GB) about US$0.24 an hour, so about US$175 a month if it never stops,
-plus about US$10 a month for the 100 GB gp3 disk. A stopped instance costs only its disk. New AWS
+plus about US$10 a month for the 100 GB gp3 disk and US$3.60 for its public address. A stopped
+instance costs only its disk (and an Elastic IP, when it has one). New AWS
 accounts start on the free plan with up to US$200 of credits for six months; on it, m7i-flex.large
 (2 vCPU, 8 GB, enough for a trial) is one of the sizes allowed. A larger size needs the paid plan,
 and the credits left still apply there.
 
 ## Automatic install
 
-The whole platform in one command, after the Cloudflare side is ready (once per domain:
-[../cloudflare-tunnel.md](../cloudflare-tunnel.md), sections 3 and 4; keep the tunnel's token) and
-the Jakarta Region is enabled (step 1 below). In AWS CloudShell, with the kit there (step 2):
+The whole platform in one command, once the Jakarta Region is enabled (step 1 below). With a
+Cloudflare Tunnel, prepare the Cloudflare side first (once per domain:
+[../cloudflare-tunnel.md](../cloudflare-tunnel.md), sections 3 and 4; keep the tunnel's token). In AWS
+CloudShell, with the kit there (step 2):
 
 ```bash
 cd ~/ioh-msp-stack
@@ -24,6 +27,11 @@ cp environments/autoinstall.conf.example ~/msp.conf && chmod 600 ~/msp.conf
 nano ~/msp.conf          # DOMAIN, STAFF_EMAIL, STAFF_NAME, CLOUDFLARE_TUNNEL_TOKEN
 ./environments/aws/create.sh --ssh-from "<your address>/32" --autoinstall ~/msp.conf
 ```
+
+**Without Cloudflare:** `WAY_IN=direct` in `~/msp.conf` and no token. `create.sh` then also allocates
+the Elastic IP `msp-test-01-ip`, opens ports 80 and 443, and ends with the DNS record to create at your
+DNS provider (`*.<domain>  A  <the Elastic IP>`): create it right away, since the install waits for it
+before HTTPS ([../direct-access.md](../direct-access.md)).
 
 Download `msp-test-01.pem` to your PC (step 4 below). The instance installs everything by itself in
 40 to 75 minutes. How far it is, and once finished the first sign-in:
@@ -33,7 +41,8 @@ ssh -i msp-test-01.pem ubuntu@<its address> sudo /opt/ioh-msp-stack/scripts/auto
 ```
 
 Rebuild later with the same file: `./environments/aws/delete.sh`, then the same `create.sh` command
-(it makes a new key pair; download the new `.pem`). CloudShell keeps `~/msp.conf` between sessions.
+(it makes a new key pair; download the new `.pem`). The delete script keeps the Elastic IP, so a DNS
+record for direct access stays right. CloudShell keeps `~/msp.conf` between sessions.
 The steps below do the same by hand.
 
 ## Steps
@@ -46,7 +55,7 @@ The steps below do the same by hand.
    where the AWS CLI is ready and signed in. Get the kit there, only to run its scripts:
 
    ```bash
-   curl -fL -o kit.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.4.0.zip
+   curl -fL -o kit.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.5.0.zip
    unzip -q kit.zip && cd ioh-msp-stack
    ```
 
@@ -64,8 +73,10 @@ The steps below do the same by hand.
    `msp-test-01` (its private key is saved as `msp-test-01.pem` in CloudShell), the security group
    `msp-test-01-sg`, and the instance `msp-test-01`: m7i-flex.xlarge, a 100 GB gp3 disk. On the free
    plan add `--type m7i-flex.large`. With `--public-key ~/.ssh/id_ed25519.pub` (uploaded to CloudShell
-   first: Actions, Upload file) it uses your own key instead. `--dry-run` shows the commands without
-   running them; `--help` lists every option. Running it again is safe.
+   first: Actions, Upload file) it uses your own key instead. For direct access, add `--way-in direct`:
+   the Elastic IP `msp-test-01-ip` and ports 80 and 443 in the security group come with it.
+   `--dry-run` shows the commands without running them; `--help` lists every option. Running it again
+   is safe.
 
    Download `msp-test-01.pem` to your PC now (CloudShell: Actions, Download file): AWS never shows the
    private key again. The script ends with the address to connect to, and the Docker address pool to use
@@ -80,7 +91,7 @@ The steps below do the same by hand.
 6. **Prepare the server.** On the server, as `ubuntu`:
 
    ```bash
-   curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.4.0.zip
+   curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.5.0.zip
    sha256sum /tmp/ioh-msp-stack.zip      # must equal the line for this file in dist/SHA256SUMS
    command -v unzip >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y unzip)
    sudo mkdir -p /opt/ioh-msp-stack && sudo chown "$(id -un):" /opt/ioh-msp-stack
@@ -91,10 +102,12 @@ The steps below do the same by hand.
    ```
 
    `--no-firewall` leaves the server's own firewall off: the security group in front of it lets in
-   nothing but SSH from your address. Then type `exit` and connect again (step 5), so your account's
+   nothing but SSH from your address (and, with direct access, ports 80 and 443). Then type `exit` and connect again (step 5), so your account's
    docker group applies.
 
-7. **Install.**
+7. **Install.** With direct access, follow [../direct-access.md](../direct-access.md), section 3,
+   instead of steps 7 to 9: the same stages, in the order that puts the sign-in gate first. With the
+   Cloudflare Tunnel:
 
    ```bash
    cd /opt/ioh-msp-stack
@@ -133,8 +146,9 @@ aws ec2 describe-instances --instance-ids <instance ID> --region ap-southeast-3 
     --query 'Reservations[0].Instances[0].PublicIpAddress' --output text     # the address after a start
 ```
 
-Every container starts again with the instance, and the tunnel reconnects by itself. The public
-address changes at every start; the tunnel does not mind, SSH needs the new one.
+Every container starts again with the instance, and the tunnel reconnects by itself. Without an
+Elastic IP the public address changes at every start; the tunnel does not mind, SSH needs the new one.
+With direct access the Elastic IP stays.
 
 - **Your own address changed** (a new office, a home connection): run `create.sh` again with the new
   `--ssh-from`, and remove the old address from the security group (EC2, Security groups,
@@ -145,7 +159,7 @@ address changes at every start; the tunnel does not mind, SSH needs the new one.
   `--collectors-from "<collector address>/32"`, then on the server
   `./scripts/install.sh settings --collectors-listen 0.0.0.0` and `docker compose up -d zabbix-server`.
   The collector's `ZBX_SERVER_HOST` is the instance's public address; give the instance an Elastic IP
-  so it stays the same.
+  so it stays the same (direct access has one already).
 - **Backups.** `sudo ./scripts/backup.sh` works as everywhere; copy `/var/backups/msp` off the server
   (Amazon S3, for example) if the trial data matters.
 
@@ -158,6 +172,8 @@ In CloudShell, from the kit folder:
 ```
 
 It terminates the instance with its disk and deletes the security group, the key pair and the
-`msp-test-01.pem` in that folder. An Elastic IP you gave the instance stays, and costs money, until you
-release it (EC2, Elastic IPs, Release). The Cloudflare side stays for a rebuild; when the trial is over,
-delete the tunnel (Networking, Tunnels) and the Access application (Zero Trust, Access) too.
+`msp-test-01.pem` in that folder. The Elastic IP `msp-test-01-ip` (direct access) stays for a rebuild:
+add `--release-address` when the trial is over, and delete its DNS record. An Elastic IP you gave the
+instance by hand stays until you release it (EC2, Elastic IPs, Release). The Cloudflare side stays for a
+rebuild too; when the trial is over, delete the tunnel (Networking, Tunnels) and the Access application
+(Zero Trust, Access).

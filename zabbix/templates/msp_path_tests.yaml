@@ -1,0 +1,356 @@
+# Path tests from a customer's site collector (kit 1.6.0).
+#
+# msp-glue creates one Zabbix host per site collector and target ("Microsoft 365 from acme-jkt-01"), monitored
+# by that collector, and links the templates for the checks the target needs. The host's interface carries the
+# target's address; the host macros carry its name, segment, port, URL and limits. msp-glue imports this file
+# itself when the templates are missing or older than the kit, so nothing needs importing by hand.
+#
+# Problems from these templates are tagged scope=path. They do not open GLPI incidents and do not count as
+# downtime in the availability agreement: they say where a slowdown is, not that a managed device is down.
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 5c80c1068d8f41aab2ba8a6dc6a2ae16
+      name: Templates/MSP
+  templates:
+    - uuid: 07e51813a6e84691a192fbfb889235a6
+      template: 'MSP path test ICMP'
+      name: 'MSP path test ICMP'
+      description: |
+        Delay and packet loss from the site collector to the target, by ping (10 packets every minute).
+        Managed by msp-glue (IOH managed services kit). Thresholds come from the host macros msp-glue writes.
+      vendor:
+        name: IOH managed services kit
+        version: 1.6.0
+      groups:
+        - name: Templates/MSP
+      items:
+        - uuid: 1350503898db4f6facc722bca1dcb4d4
+          name: 'Path: packet loss'
+          type: SIMPLE
+          key: 'icmppingloss[,10]'
+          delay: '{$PATH.INTERVAL}'
+          value_type: FLOAT
+          units: '%'
+          description: 'Share of 10 ping packets lost between the site collector and the target.'
+          tags:
+            - tag: component
+              value: path
+          triggers:
+            - uuid: 7d495b862de14a41b2d0db756bfa4b6f
+              expression: 'min(/MSP path test ICMP/icmppingloss[,10],#3)=100'
+              name: '{$PATH.NAME} does not answer from {$PATH.COLLECTOR}'
+              opdata: 'Loss: {ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Three checks in a row lost every packet to the target. The segment tag says which part of the path the target stands for.'
+              tags:
+                - tag: scope
+                  value: path
+            - uuid: b93543b2625d4ea09dd65506faf6a6a9
+              expression: 'avg(/MSP path test ICMP/icmppingloss[,10],15m)>{$PATH.LOSS.WARN} and last(/MSP path test ICMP/icmppingloss[,10])<100'
+              name: 'Packet loss to {$PATH.NAME} from {$PATH.COLLECTOR} above {$PATH.LOSS.WARN}%'
+              opdata: 'Loss: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Average loss over 15 minutes is above the limit for this target.'
+              dependencies:
+                - name: '{$PATH.NAME} does not answer from {$PATH.COLLECTOR}'
+                  expression: 'min(/MSP path test ICMP/icmppingloss[,10],#3)=100'
+              tags:
+                - tag: scope
+                  value: path
+        - uuid: 538b687094fb40d59e83fe0e427436f7
+          name: 'Path: delay'
+          type: SIMPLE
+          key: 'icmppingsec[,10]'
+          delay: '{$PATH.INTERVAL}'
+          value_type: FLOAT
+          units: s
+          description: 'Average round-trip time of 10 ping packets between the site collector and the target (0 when none answered).'
+          tags:
+            - tag: component
+              value: path
+          triggers:
+            - uuid: c3219fdab0c04f61ad61b02765e332b5
+              expression: 'avg(/MSP path test ICMP/icmppingsec[,10],15m)>{$PATH.RTT.WARN}'
+              name: 'Delay to {$PATH.NAME} from {$PATH.COLLECTOR} above {$PATH.RTT.WARN}s'
+              opdata: 'Delay: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Average delay over 15 minutes is above the limit for this target.'
+              dependencies:
+                - name: '{$PATH.NAME} does not answer from {$PATH.COLLECTOR}'
+                  expression: 'min(/MSP path test ICMP/icmppingloss[,10],#3)=100'
+              tags:
+                - tag: scope
+                  value: path
+            - uuid: d0affb75ac39452cbcf1dd7acf3fec4e
+              expression: 'baselinedev(/MSP path test ICMP/icmppingsec[,10],1h:now/h,"d",7)>{$PATH.DRIFT.SIGMA} and trendavg(/MSP path test ICMP/icmppingsec[,10],1h:now/h)>{$PATH.DRIFT.MIN}'
+              name: 'Delay to {$PATH.NAME} from {$PATH.COLLECTOR} is above its usual level for this hour'
+              priority: INFO
+              description: |
+                Early warning: last hour's average delay is more than {$PATH.DRIFT.SIGMA} standard deviations above the
+                same hour on the previous 7 days, and above {$PATH.DRIFT.MIN}s. Checked once an hour; needs a week of data.
+              tags:
+                - tag: scope
+                  value: path
+                - tag: warning
+                  value: early
+      tags:
+        - tag: class
+          value: network
+        - tag: target
+          value: path-test
+      macros:
+        - macro: '{$PATH.COLLECTOR}'
+          value: 'the site collector'
+          description: 'Name of the site collector (set by msp-glue).'
+        - macro: '{$PATH.DRIFT.MIN}'
+          value: '0.02'
+          description: 'Delay, in seconds, below which a rise is never reported as unusual.'
+        - macro: '{$PATH.DRIFT.SIGMA}'
+          value: '3'
+          description: 'Standard deviations above the usual level that count as unusual.'
+        - macro: '{$PATH.INTERVAL}'
+          value: 1m
+          description: 'How often the collector checks the target.'
+        - macro: '{$PATH.LOSS.WARN}'
+          value: '5'
+          description: 'Packet loss limit in %, averaged over 15 minutes.'
+        - macro: '{$PATH.NAME}'
+          value: 'the target'
+          description: 'Name of the target (set by msp-glue).'
+        - macro: '{$PATH.RTT.WARN}'
+          value: '0.15'
+          description: 'Delay limit in seconds, averaged over 15 minutes.'
+    - uuid: ebf5bf3e5a3c466e829ee7f258d1687f
+      template: 'MSP path test TCP'
+      name: 'MSP path test TCP'
+      description: |
+        Time to open a TCP connection from the site collector to the target's port, for targets that do not answer ping.
+        Managed by msp-glue (IOH managed services kit).
+      vendor:
+        name: IOH managed services kit
+        version: 1.6.0
+      groups:
+        - name: Templates/MSP
+      items:
+        - uuid: 9c9aae1d442240fca648eb86594cbd4d
+          name: 'Path: connection time to port {$PATH.PORT}'
+          type: SIMPLE
+          key: 'net.tcp.service.perf[tcp,,{$PATH.PORT}]'
+          delay: '{$PATH.INTERVAL}'
+          value_type: FLOAT
+          units: s
+          description: 'Seconds to open a TCP connection to the target (0 when it could not be opened).'
+          tags:
+            - tag: component
+              value: path
+          triggers:
+            - uuid: 68dc4c365557464187ad851e35f3a77d
+              expression: 'max(/MSP path test TCP/net.tcp.service.perf[tcp,,{$PATH.PORT}],#3)=0'
+              name: '{$PATH.NAME} refuses connections on port {$PATH.PORT} from {$PATH.COLLECTOR}'
+              priority: AVERAGE
+              description: 'Three checks in a row could not open a connection to the target.'
+              tags:
+                - tag: scope
+                  value: path
+            - uuid: 00a9d6cb560d4a4d82120611469174af
+              expression: 'avg(/MSP path test TCP/net.tcp.service.perf[tcp,,{$PATH.PORT}],15m)>{$PATH.RTT.WARN}'
+              name: 'Slow connection to {$PATH.NAME} from {$PATH.COLLECTOR}'
+              opdata: 'Connection time: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Average connection time over 15 minutes is above the limit for this target.'
+              dependencies:
+                - name: '{$PATH.NAME} refuses connections on port {$PATH.PORT} from {$PATH.COLLECTOR}'
+                  expression: 'max(/MSP path test TCP/net.tcp.service.perf[tcp,,{$PATH.PORT}],#3)=0'
+              tags:
+                - tag: scope
+                  value: path
+      tags:
+        - tag: class
+          value: network
+        - tag: target
+          value: path-test
+      macros:
+        - macro: '{$PATH.COLLECTOR}'
+          value: 'the site collector'
+        - macro: '{$PATH.INTERVAL}'
+          value: 1m
+        - macro: '{$PATH.NAME}'
+          value: 'the target'
+        - macro: '{$PATH.PORT}'
+          value: '443'
+          description: 'TCP port to connect to.'
+        - macro: '{$PATH.RTT.WARN}'
+          value: '0.15'
+          description: 'Connection time limit in seconds, averaged over 15 minutes.'
+    - uuid: 01d14d6264a9445fa90f1d9ac75189bd
+      template: 'MSP path test HTTPS'
+      name: 'MSP path test HTTPS'
+      description: |
+        Full response time of one web request from the site collector to the target's address ({$PATH.URL}), with
+        the status code. Use a light page, such as a health check address. Managed by msp-glue (IOH managed services kit).
+      vendor:
+        name: IOH managed services kit
+        version: 1.6.0
+      groups:
+        - name: Templates/MSP
+      items:
+        - uuid: 14e78f49f1bf4e51a170171dd8a3be09
+          name: 'Path: web request'
+          type: SCRIPT
+          key: msp.path.https
+          delay: '{$PATH.HTTP.INTERVAL}'
+          history: 1d
+          value_type: TEXT
+          trends: '0'
+          params: |
+            var params = JSON.parse(value);
+            var result = {status: 0, ok: 0, time: 0, error: ''};
+            if (!params.url || params.url.indexOf('{$') === 0) {
+                result.error = 'No address set for this target';
+                return JSON.stringify(result);
+            }
+            var request = new HttpRequest();
+            request.addHeader('User-Agent: IOH-MSP-path-test');
+            var started = Date.now();
+            try {
+                request.get(params.url);
+                result.status = request.getStatus();
+            } catch (error) {
+                result.error = String(error).substring(0, 250);
+            }
+            result.time = (Date.now() - started) / 1000;
+            // An answer below 500 means the application answered, even with a redirect or a sign-in page.
+            result.ok = (result.status > 0 && result.status < 500) ? 1 : 0;
+            if (!result.ok && !result.error) {
+                result.error = 'HTTP ' + result.status;
+            }
+            return JSON.stringify(result);
+          description: 'Raw result of the web request (status, time, error). The items below read it.'
+          timeout: '{$PATH.HTTP.TIMEOUT}'
+          parameters:
+            - name: url
+              value: '{$PATH.URL}'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: 7a8bd075b1dc49109de1cf0b2b01d5c6
+          name: 'Path: application answers'
+          type: DEPENDENT
+          key: msp.path.https.ok
+          delay: '0'
+          description: '1 when the application answered with a status below 500.'
+          valuemap:
+            name: 'MSP yes or no'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ok
+          master_item:
+            key: msp.path.https
+          tags:
+            - tag: component
+              value: path
+          triggers:
+            - uuid: 10925ef50a1545dd8a6229f0f6633af7
+              expression: 'max(/MSP path test HTTPS/msp.path.https.ok,#3)=0'
+              name: '{$PATH.NAME} does not answer web requests from {$PATH.COLLECTOR}'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: AVERAGE
+              description: 'Three web requests in a row failed or got a server error. The item "Path: last error" has the reason.'
+              tags:
+                - tag: scope
+                  value: path
+        - uuid: e65ec979d1e4446aaad433f68835f67b
+          name: 'Path: web response time'
+          type: DEPENDENT
+          key: msp.path.https.time
+          delay: '0'
+          value_type: FLOAT
+          units: s
+          description: 'Seconds from the start of the request to the end of the answer.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.time
+          master_item:
+            key: msp.path.https
+          tags:
+            - tag: component
+              value: path
+          triggers:
+            - uuid: 2faafb5d721b4f01908cf0b573a3cac8
+              expression: 'avg(/MSP path test HTTPS/msp.path.https.time,30m)>{$PATH.HTTP.WARN}'
+              name: 'Slow web response from {$PATH.NAME} at {$PATH.COLLECTOR}'
+              opdata: 'Response time: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'Average response time over 30 minutes is above the limit for this target.'
+              dependencies:
+                - name: '{$PATH.NAME} does not answer web requests from {$PATH.COLLECTOR}'
+                  expression: 'max(/MSP path test HTTPS/msp.path.https.ok,#3)=0'
+              tags:
+                - tag: scope
+                  value: path
+        - uuid: 0851717967364e50a1f9f83335f65d17
+          name: 'Path: web status code'
+          type: DEPENDENT
+          key: msp.path.https.status
+          delay: '0'
+          description: 'HTTP status code of the answer (0 when there was none).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.status
+          master_item:
+            key: msp.path.https
+          tags:
+            - tag: component
+              value: path
+        - uuid: 9bcde0809b594b77bdb2a2f8b0f415c4
+          name: 'Path: last error'
+          type: DEPENDENT
+          key: msp.path.https.error
+          delay: '0'
+          history: 7d
+          value_type: CHAR
+          trends: '0'
+          description: 'Why the last web request failed (empty when it worked).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.error
+          master_item:
+            key: msp.path.https
+          tags:
+            - tag: component
+              value: path
+      tags:
+        - tag: class
+          value: network
+        - tag: target
+          value: path-test
+      macros:
+        - macro: '{$PATH.COLLECTOR}'
+          value: 'the site collector'
+        - macro: '{$PATH.HTTP.INTERVAL}'
+          value: 5m
+          description: 'How often the collector requests the address.'
+        - macro: '{$PATH.HTTP.TIMEOUT}'
+          value: 15s
+          description: 'How long a request may take before it counts as failed.'
+        - macro: '{$PATH.HTTP.WARN}'
+          value: '2'
+          description: 'Response time limit in seconds, averaged over 30 minutes.'
+        - macro: '{$PATH.NAME}'
+          value: 'the target'
+        - macro: '{$PATH.URL}'
+          value: ''
+          description: 'Address to request, for example https://outlook.office365.com/ (set by msp-glue).'
+      valuemaps:
+        - uuid: 5db630aa2f1f422aace20cc1b8587695
+          name: 'MSP yes or no'
+          mappings:
+            - value: '0'
+              newvalue: 'No'
+            - value: '1'
+              newvalue: 'Yes'

@@ -7,13 +7,18 @@ services:
     restart: unless-stopped
     environment:
       MSP_DOMAIN: ${MSP_DOMAIN}
-      # "internal" (Caddy's own certificate authority) or "/certs/fullchain.pem /certs/privkey.pem"
-      # for IOH certificates; ./scripts/install.sh certs sets it.
+      # "internal" (Caddy's own certificate authority), "/certs/fullchain.pem /certs/privkey.pem" for IOH
+      # certificates (./scripts/install.sh certs sets it), or an e-mail address for Let's Encrypt
+      # (./scripts/install.sh settings --way-in direct sets it).
       CADDY_TLS: ${CADDY_TLS:-internal}
       # Networks allowed to reach the engineering tools (space-separated CIDR list).
       ADMIN_NETWORKS: ${ADMIN_NETWORKS:-10.0.0.0/8 172.16.0.0/12 192.168.0.0/16}
+      # What else stands in front of them: off, keycloak (the sign-in gate, ./scripts/install.sh gate)
+      # or closed (direct access before the gate is on). The Caddyfile explains each.
+      STAFF_GATE: ${STAFF_GATE:-off}
     ports:
       # WEB_LISTEN_ADDRESS=127.0.0.1 in .env: only this server reaches them (a Cloudflare Tunnel running here).
+      # With direct access both stay open to the Internet: port 80 for Let's Encrypt and the move to HTTPS.
       - "${WEB_LISTEN_ADDRESS:-0.0.0.0}:80:80"
       - "${WEB_LISTEN_ADDRESS:-0.0.0.0}:443:443"
     volumes:

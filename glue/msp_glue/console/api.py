@@ -17,7 +17,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from . import actions, auth, data, detail, investigate, views
+from . import actions, auth, data, detail, investigate, observe, reports, views
 from .auth import User
 
 log = logging.getLogger("msp_glue.console.api")
@@ -121,6 +121,40 @@ def metrics(device_id: str, request: Request, range: str = "6h", charts: str = "
     d = found(data.device_by_id(device_id), "Unknown device.")
     wanted = [c for c in charts.split(",") if c][:12]
     return detail.metrics(d, range if range in detail.RANGES else "6h", wanted)
+
+
+@router.get("/customers/{code}/paths")
+def customer_paths(code: str, request: Request) -> dict:
+    reader(request)
+    found(data.customer(code), f"No managed customer with code {code}.")
+    return observe.paths(code)
+
+
+@router.get("/capacity")
+def capacity(request: Request, customer: str = "", trouble: bool = False) -> dict:
+    reader(request)
+    return observe.capacity(customer, trouble)
+
+
+@router.get("/reports")
+def report_list(request: Request, month: str = "") -> dict:
+    reader(request)
+    return reports.summary(month or None)
+
+
+@router.get("/reports/{code}/{month}")
+def report(code: str, month: str, request: Request) -> dict:
+    reader(request)
+    return found(reports.detail(code, month), f"No managed customer with code {code}.")
+
+
+@router.get("/reports/{code}/{month}/print")
+def report_print(code: str, month: str, request: Request) -> Response:
+    reader(request)
+    page = reports.render(code, month)
+    if page is None:
+        raise HTTPException(status_code=404, detail="There is no finished draft for this customer and month yet.")
+    return Response(page, media_type="text/html; charset=utf-8")
 
 
 @router.get("/work")
@@ -303,6 +337,35 @@ def maintenance(code: str, body: MaintenanceBody, request: Request) -> dict:
 def add_device(code: str, body: DeviceBody, request: Request) -> dict:
     return act(request, actions.add_device, code, body.site, body.name, body.role, body.platform, body.model,
                body.status, body.ip, body.serial, body.monitoring)
+
+
+class ReportText(BaseModel):
+    summary: str = ""
+    availability: str = ""
+    service: str = ""
+    paths: str = ""
+    capacity: str = ""
+    recommendations: list[str] = Field(default_factory=list)
+
+
+@router.post("/reports/{code}/{month}/draft")
+def report_draft(code: str, month: str, request: Request) -> dict:
+    return act(request, reports.start, code, month)
+
+
+@router.post("/reports/{code}/{month}/text")
+def report_text(code: str, month: str, body: ReportText, request: Request) -> dict:
+    return act(request, reports.save_text, code, month, body.model_dump())
+
+
+@router.post("/reports/{code}/{month}/approve")
+def report_approve(code: str, month: str, request: Request) -> dict:
+    return act(request, reports.approve, code, month)
+
+
+@router.post("/reports/{code}/{month}/reopen")
+def report_reopen(code: str, month: str, request: Request) -> dict:
+    return act(request, reports.reopen, code, month)
 
 
 def not_found(request: Request) -> JSONResponse:

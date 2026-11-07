@@ -22,15 +22,15 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
 from ..settings import settings
-from . import actions, api, auth, store
+from . import actions, api, auth, reports, store
 
 log = logging.getLogger("msp_glue.console")
 HERE = Path(__file__).resolve().parent
 UI = HERE / "ui"
-VERSION = "1.2"
+VERSION = "1.6"
 BRANDING = Path(os.environ.get("CONSOLE_BRANDING_DIR", "/branding"))
 # Page addresses the React application answers (react-router routes in console-ui/src/routes.tsx).
-PAGES = ("/", "/ops", "/customers", "/changes", "/service", "/audit", "/tools")
+PAGES = ("/", "/ops", "/customers", "/changes", "/service", "/reports", "/audit", "/tools")
 
 
 def _session_secret() -> str:
@@ -44,6 +44,9 @@ def _session_secret() -> str:
 @asynccontextmanager
 async def lifespan(_app):
     actions.resume()   # follow-ups that were running when the console stopped
+    if os.environ.get("CONSOLE_REPORT_SCHEDULE", "on").lower() not in ("off", "0", "false"):
+        import threading
+        threading.Thread(target=reports.scheduler, daemon=True, name="monthly reports").start()
     yield
 
 
@@ -209,6 +212,7 @@ def _page(request: Request):
 for _path in PAGES:
     app.add_api_route(_path, _page, methods=["GET"], include_in_schema=False)
 app.add_api_route("/customers/{rest:path}", _page, methods=["GET"], include_in_schema=False)
+app.add_api_route("/reports/{rest:path}", _page, methods=["GET"], include_in_schema=False)
 
 
 @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)

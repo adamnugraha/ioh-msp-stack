@@ -8,23 +8,34 @@
 #
 # Keep the file: a rebuild later is the delete script, then the same create command with this file.
 # It may hold your tunnel token, so keep it as private as a password (chmod 600 my.conf).
+# Two ways in from the Internet (WAY_IN below): a Cloudflare Tunnel, or direct, without Cloudflare.
 # A value with spaces needs quotes. Lines starting with # are notes.
 
 # Where the server runs: gcp, aws, vps or ioh. The Google Cloud and AWS create scripts fill it in.
 ENVIRONMENT=
 
-# Required. A domain on Cloudflare: every tool gets a name directly under it (console.<domain>,
-# nautobot.<domain> and so on). One domain serves one platform.
+# Required. Every tool gets a name directly under this domain (console.<domain>, nautobot.<domain>
+# and so on). One domain serves one platform. With WAY_IN=cloudflare: a domain on Cloudflare. With
+# WAY_IN=direct: any domain whose DNS you manage.
 DOMAIN=
 
 # Required. Your own staff sign-in for the MSP Console: e-mail address and full name.
 STAFF_EMAIL=
 STAFF_NAME=""
 
-# Optional. The administrator address in Nautobot and Forgejo.
+# Optional. The administrator address in Nautobot and Forgejo. With WAY_IN=direct also the Let's
+# Encrypt account (empty: STAFF_EMAIL).
 NOC_EMAIL=
 
-# Optional. The Cloudflare Tunnel's token: Cloudflare dashboard, Networking, Tunnels, your tunnel,
+# How browsers reach the platform (gcp, aws and vps):
+#   cloudflare  through a Cloudflare Tunnel, with Cloudflare Access in front (environments/cloudflare-tunnel.md)
+#   direct      straight from the Internet, without Cloudflare: ports 80 and 443 open, certificates from
+#               Let's Encrypt, and the kit's own sign-in gate in front of the engineers' tools. The create
+#               scripts then keep a fixed address; point *.<domain> at it in DNS as soon as they show it
+#               (environments/direct-access.md).
+WAY_IN=cloudflare
+
+# WAY_IN=cloudflare only. The Cloudflare Tunnel's token: Cloudflare dashboard, Networking, Tunnels, your tunnel,
 # the long string after "cloudflared service install". With it, the server connects the tunnel by
 # itself, and a rebuilt server takes over the same names. Without it, connect later on the server:
 # sudo /opt/ioh-msp-stack/scripts/autoinstall.sh tunnel. The token ends up in the server's start
@@ -49,12 +60,19 @@ TIMEZONE=Asia/Jakarta
 SUBNET=172.30.0.0/24
 POOL=172.31.0.0/16
 
+# WAY_IN=direct only, optional. The server's address on the Internet, where every name points in DNS.
+# Empty: the server finds it out (right for Google Cloud, AWS and most VPS).
+PUBLIC_ADDRESS=
+
 # VPS only, required there: the addresses allowed to reach SSH, for the server's own firewall
 # (open https://checkip.amazonaws.com on the PC you connect from), for example "203.0.113.7/32".
 SSH_FROM=""
 
-# IOH private cloud only: the NOC and VPN ranges, and IOH's web proxy if the server needs one.
+# IOH private cloud: the NOC and VPN ranges (required there). With WAY_IN=direct (optional): only these
+# networks reach the engineers' tools at all, the sign-in gate still in front; empty: from anywhere.
 ADMIN_NETWORKS=""
+
+# IOH private cloud only: IOH's web proxy, if the server needs one.
 PROXY=
 PROXY_CA=
 

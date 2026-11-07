@@ -24,6 +24,11 @@ TENANT_FIELDS = {
                         "description": "Leave empty to use the central proxies."},
     "msp_snmp_version": {"label": "SNMP version", "type": "select", "choices": ["2", "3"], "default": "2"},
     "msp_contact_email": {"label": "Customer contact e-mail", "type": "text"},
+    "msp_path_targets": {"label": "Path test targets", "type": "json",
+                         "description": "Extra targets the site collectors test, as a JSON list (see the guide): "
+                                        "[{\"name\": \"IOH edge router\", \"address\": \"10.20.30.1\", \"segment\": \"ioh\"}]"},
+    "msp_report_language": {"label": "Monthly report language", "type": "select", "choices": ["id", "en"],
+                            "default": "id", "description": "id = Bahasa Indonesia, en = English"},
     "msp_glpi_entity_id": {"label": "GLPI entity id", "type": "integer", "managed": True},
     "msp_zabbix_hostgroup_id": {"label": "Zabbix host group id", "type": "text", "managed": True},
     "msp_semaphore_project_id": {"label": "Semaphore project id", "type": "integer", "managed": True},

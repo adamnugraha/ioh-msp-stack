@@ -725,3 +725,101 @@ def test_downtime_follows_the_sla_service(monkeypatch):
     if len(days) > 1:
         assert days[1]["minutes"] == 10 and all(d["minutes"] == 0 for d in days[2:])
     data.cache.clear("downtime:acme")
+
+
+# ======================================================= kit 1.6.0: path tests, capacity, reports
+class FakePathZabbix:
+    """Zabbix answering for one site collector of acme with two path test hosts."""
+
+    def call(self, method, params=None):
+        now = int(data.now().timestamp())
+        if method == "host.get":
+            return [
+                {"hostid": "801", "name": "IOH edge router from acme-jkt-01 (PT ACME)", "status": "0",
+                 "tags": [{"tag": "collector", "value": "acme-jkt-01"}, {"tag": "path_target", "value": "IOH edge router"},
+                          {"tag": "segment", "value": "ioh"}],
+                 "macros": [{"macro": "{$PATH.RTT.WARN}", "value": "0.15"}, {"macro": "{$PATH.LOSS.WARN}", "value": "5"}],
+                 "parentTemplates": [{"host": "MSP path test ICMP"}],
+                 "interfaces": [{"ip": "10.20.30.1", "dns": "", "useip": "1", "main": "1"}]},
+                {"hostid": "802", "name": "Microsoft 365 from acme-jkt-01 (PT ACME)", "status": "0",
+                 "tags": [{"tag": "collector", "value": "acme-jkt-01"}, {"tag": "path_target", "value": "Microsoft 365"},
+                          {"tag": "segment", "value": "application"}],
+                 "macros": [{"macro": "{$PATH.URL}", "value": "https://outlook.office365.com/"},
+                            {"macro": "{$PATH.HTTP.WARN}", "value": "2"}],
+                 "parentTemplates": [{"host": "MSP path test HTTPS"}],
+                 "interfaces": [{"ip": "", "dns": "outlook.office365.com", "useip": "0", "main": "1"}]},
+            ]
+        if method == "item.get":
+            return [
+                {"itemid": "1", "hostid": "801", "key_": "icmppingsec[,10]", "lastvalue": "0.004", "lastclock": str(now - 30), "state": "0"},
+                {"itemid": "2", "hostid": "801", "key_": "icmppingloss[,10]", "lastvalue": "0", "lastclock": str(now - 30), "state": "0"},
+                {"itemid": "3", "hostid": "802", "key_": "msp.path.https.time", "lastvalue": "2.9", "lastclock": str(now - 60), "state": "0"},
+                {"itemid": "4", "hostid": "802", "key_": "msp.path.https.status", "lastvalue": "200", "lastclock": str(now - 60), "state": "0"},
+            ]
+        if method == "problem.get":
+            return [{"eventid": "9", "name": "Slow web response from Microsoft 365 at acme-jkt-01", "severity": "2",
+                     "clock": str(now - 600), "tags": [{"tag": "collector", "value": "acme-jkt-01"},
+                                                      {"tag": "path_target", "value": "Microsoft 365"}]}]
+        if method == "trend.get":
+            return [{"itemid": "1", "clock": str(now - 3600 * h), "value_avg": "0.004"} for h in range(1, 4)]
+        if method == "proxy.get":
+            return [{"name": "acme-jkt-01", "state": "2", "lastaccess": str(now - 5)}]
+        return []
+
+
+def test_path_tests_capacity_and_reports_answer_the_contract(client, monkeypatch, sample, tmp_path):
+    from msp_glue import capacity as forecast
+    from msp_glue.console import observe, reports
+    data.cache.clear_prefix("paths:")
+    data.cache.clear("capacity")
+    monkeypatch.setattr(observe.clients, "zabbix", lambda: FakePathZabbix())
+    monkeypatch.setattr(forecast, "load", lambda: {"generated": "2026-11-07T20:00:00+00:00",
+                                                   "settings": {"warn_percent": 80, "horizon_days": 45},
+                                                   "errors": [], "tickets": {}, "links": [
+        {"customer": "acme", "customer_name": "PT ACME", "device": "jkt01-rtr01", "device_id": "d1", "site": "Jakarta HQ",
+         "interface": "Gi0/0/0", "description": "", "circuit": "IOH-1", "provider": "IOH", "capacity_bps": 1e8,
+         "capacity_from": "circuit", "direction": "in", "status": "at_risk", "busy_bps": 7.6e7, "peak_bps": 8.1e7,
+         "utilisation": 76.0, "slope_bps_per_day": 5e5, "days_to_warn": 8.0, "days": 28,
+         "history": [["2026-11-05", 75000000], ["2026-11-06", 76000000]], "ticket_id": 4521}]})
+    sign_in(monkeypatch, ENGINEER)
+    paths = client.get("/api/v1/customers/acme/paths").json()
+    conforms(paths, "PathsView")
+    [collector] = paths["collectors"]
+    assert collector["verdict"]["side"] == "application" and "Microsoft 365" in collector["verdict"]["text"]
+    assert [t["state"] for t in collector["targets"]] == ["ok", "warn"]
+    assert collector["targets"][1]["webMs"] == 2900.0 and collector["targets"][1]["limits"]["webMs"] == 2000.0
+    cap = client.get("/api/v1/capacity?customer=acme").json()
+    conforms(cap, "CapacityView")
+    assert cap["links"][0]["ticketId"] == 4521 and cap["links"][0]["history"][0][1] == 75000000
+    assert client.get("/api/v1/capacity?trouble=true").json()["links"]
+
+    # reports: none yet, then a draft through the API, then approved and printed
+    monkeypatch.setattr(store, "_ready", False)
+    monkeypatch.setattr(data.settings, "console_data_dir", tmp_path)
+    month = reports.previous_month()
+    conforms(client.get("/api/v1/reports").json(), "ReportList")
+    empty = client.get(f"/api/v1/reports/acme/{month}").json()
+    conforms(empty, "ReportDetail")
+    assert empty["status"] == "none"
+    assert client.get(f"/api/v1/reports/acme/{month}/print").status_code == 404
+    monkeypatch.setattr(reports.investigate, "endpoint", lambda: ("", "", ""))
+    started = []
+    monkeypatch.setattr(reports.threading, "Thread", lambda target, args, **kw: type(
+        "T", (), {"start": lambda self: started.append(target(*args))})())
+    headers = {"X-CSRF-Token": client.get("/api/v1/me").json()["csrf"], "Origin": CONSOLE}
+    r = client.post(f"/api/v1/reports/acme/{month}/draft", headers=headers)
+    assert r.status_code == 200, r.text
+    conforms(r.json(), "ActionResult")
+    draft = client.get(f"/api/v1/reports/acme/{month}").json()
+    conforms(draft, "ReportDetail")
+    assert draft["status"] == "draft" and draft["writer"] == "fixed sentences" and draft["flags"] == []
+    text = {**draft["narrative"], "summary": draft["narrative"]["summary"] + " 937 devices were replaced."}
+    r = client.post(f"/api/v1/reports/acme/{month}/text", headers=headers, json=text)
+    assert r.status_code == 200 and "1 numbers are not in the data" in r.json()["message"]
+    assert client.post(f"/api/v1/reports/acme/{month}/approve", headers=headers).status_code == 200
+    page = client.get(f"/api/v1/reports/acme/{month}/print")
+    assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
+    # the sample customer has no msp_report_language: the default, Bahasa Indonesia
+    assert "Laporan Layanan Bulanan" in page.text and "DRAF" not in page.text
+    sign_in(monkeypatch, person(auth.AUTOMATION))
+    assert client.post(f"/api/v1/reports/acme/{month}/reopen", headers=headers).status_code == 403

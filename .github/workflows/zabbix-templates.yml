@@ -1,0 +1,62 @@
+# Path test templates against a real Zabbix 7.0 (kit 1.6.0).
+#
+# Starts Zabbix with one site collector (lab/compose.paths-ci.yaml), lets msp-glue create path test hosts and
+# waits until ping, TCP, web and outage checks all return what they should (lab/check_paths.py). Also runs the
+# glue unit tests. Runs on every push that touches the templates, the path test code or this workflow.
+
+name: Zabbix templates
+
+on:
+  push:
+    paths:
+      - "zabbix/templates/**"
+      - "glue/msp_glue/paths.py"
+      - "glue/msp_glue/clients/zabbix.py"
+      - "glue/tests/**"
+      - "lab/check_paths.py"
+      - "lab/compose.paths-ci.yaml"
+      - ".github/workflows/zabbix-templates.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zabbix-templates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  paths:
+    name: path tests on Zabbix 7.0
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Python and the glue package
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install -q -c glue/constraints.txt "./glue[test]"
+
+      - name: Glue unit tests
+        run: cd glue && /tmp/venv/bin/python -m pytest -q
+
+      - name: Start Zabbix and the collector
+        run: |
+          set -euo pipefail
+          export ZABBIX_IMAGE_TAG=$(sed -n 's/^ZABBIX_IMAGE_TAG=//p' .env.example)
+          export POSTGRES_IMAGE=$(sed -n 's/^POSTGRES_IMAGE=//p' .env.example)
+          echo "Zabbix ${ZABBIX_IMAGE_TAG}, ${POSTGRES_IMAGE}"
+          docker compose -f lab/compose.paths-ci.yaml up -d --quiet-pull
+
+      - name: Path tests
+        run: /tmp/venv/bin/python lab/check_paths.py
+
+      - name: Logs when something failed
+        if: failure()
+        run: |
+          docker compose -f lab/compose.paths-ci.yaml ps
+          docker compose -f lab/compose.paths-ci.yaml logs --tail 80 zabbix-server ci-collector

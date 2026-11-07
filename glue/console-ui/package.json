@@ -1,7 +1,7 @@
 {
   "name": "msp-console-ui",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.3.0",
   "type": "module",
   "description": "MSP Console front end: React, TypeScript, Tailwind and shadcn/ui over the console's JSON API",
   "sideEffects": [
