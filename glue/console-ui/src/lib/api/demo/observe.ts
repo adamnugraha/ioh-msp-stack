@@ -207,6 +207,12 @@ export function reportMonthLabel(month: string, language: ReportLanguage = "en")
   return `${MONTHS[language][Number(m) - 1]} ${y}`;
 }
 
+/** "2026-12" for "2026-11", "2027-01" for "2026-12" */
+function nextMonth(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+}
+
 const num = (v: number | null | undefined, lang: ReportLanguage, digits = 2) => {
   if (v === null || v === undefined) return "-";
   const text = new Intl.NumberFormat(lang === "id" ? "id-ID" : "en-GB", { maximumFractionDigits: digits }).format(v);
@@ -224,14 +230,17 @@ export function demoFacts(c: DemoCustomer, month: string, language: ReportLangua
   return {
     path_overview: { targets: pathRows.length, with_problems: pathRows.filter((t) => t.problems.length).length },
     capacity_overview: { links: links.filter((l) => ["over", "at_risk", "ok"].includes(l.status)).length, warning_percent: 80, near_or_over_warning: nearOrOver },
-    period: { month, label: reportMonthLabel(month, language) },
+    customer: { code: c.code, name: c.name, tier: c.tier, regulated: c.regulated },
+    language,
+    devices: { active: 9 },
+    period: { month, label: reportMonthLabel(month, language), start: `${month}-01T00:00:00+07:00`, end: `${nextMonth(month)}-01T00:00:00+07:00` },
     availability: { target_percent: slo, achieved_percent: achieved, previous_month_percent: c.olderMonths[3] ?? null, downtime_minutes: minutes,
       met: achieved === null ? undefined : achieved >= slo },
     tickets: { opened, solved: opened - 1, service_level_breaches: c.month.ownLate + c.month.resolveLate, taken_late: c.month.ownLate,
       resolved_late: c.month.resolveLate, mean_hours_to_resolve: c.month.mttrHours },
-    configuration: { devices_checked: 8, compliant_percent: 88, backups_fresh_percent: 100 },
-    problems: { count: 3, total_minutes: Math.round((minutes ?? 0) * 1.6), longest: minutes ? [
-      { device: `${c.sites[0].id}-rtr01`, problem: "Unavailable by ICMP ping", severity: "High", started: `${month}-14T09:12`, minutes: Math.round(minutes * 0.8) },
+    configuration: { devices_checked: 8, compliant_percent: 88, backups_fresh_percent: 100, as_of: iso(Date.now()) },
+    problems: { count: 3, by_severity: { High: 2, Average: 1 }, total_minutes: Math.round((minutes ?? 0) * 1.6), longest: minutes ? [
+      { device: `${c.sites[0].id}-rtr01`, problem: "Unavailable by ICMP ping", severity: "High", started: `${month}-14T09:12`, minutes: Math.round(minutes * 0.8), resolved: true },
     ] : [] },
     paths: paths.collectors.flatMap((col) => col.targets.map((t) => ({
       collector: col.name, target: t.name, segment: t.segment, problems: t.problems.length ? 2 : 0,

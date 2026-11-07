@@ -799,7 +799,9 @@ export interface ReportFlag {
 }
 
 export interface ReportFacts {
-  period: { month: string; label: string };
+  customer: { code: string; name: string; tier: Tier; regulated: boolean };
+  period: { month: string; label: string; start: string; end: string };
+  language: ReportLanguage;
   availability: {
     target_percent: number | null;
     achieved_percent: number | null;
@@ -815,19 +817,46 @@ export interface ReportFacts {
     resolved_late: number;
     mean_hours_to_resolve: number | null;
   };
-  configuration: { devices_checked: number; compliant_percent: number | null; backups_fresh_percent: number | null };
+  configuration: { devices_checked: number; compliant_percent: number | null; backups_fresh_percent: number | null; as_of: string };
+  devices: { active: number };
   problems:
-    | { count: number; total_minutes: number; longest: { device: string; problem: string; severity: string; started: string; minutes: number }[] }
+    | {
+        count: number;
+        by_severity: Record<string, number>;
+        total_minutes: number;
+        longest: { device: string; problem: string; severity: string; started: string; minutes: number; resolved: boolean }[];
+      }
     | { error: string };
   paths:
-    | { collector: string; target: string; segment: PathSegment; problems: number; delay_ms?: number; connect_ms?: number; web_ms?: number; loss_percent?: number }[]
+    | {
+        collector: string;
+        target: string;
+        segment: PathSegment;
+        problems: number;
+        delay_ms?: number;
+        worst_hour_delay_ms?: number;
+        connect_ms?: number;
+        worst_hour_connect_ms?: number;
+        web_ms?: number;
+        worst_hour_web_ms?: number;
+        loss_percent?: number;
+      }[]
     | { error: string };
   capacity:
-    | { device: string; interface: string; circuit: string; capacity_mbps: number; busy_hour_mbps: number; utilisation_percent: number | null; days_to_warning: number | null; status: CapacityStatus }[]
+    | {
+        device: string;
+        interface: string;
+        circuit: string;
+        capacity_mbps: number;
+        busy_hour_mbps: number;
+        utilisation_percent: number | null;
+        days_to_warning: number | null;
+        status: CapacityStatus;
+      }[]
     | { error: string };
   /** counts the text may use */
-  path_overview?: { targets: number; with_problems: number };
-  capacity_overview?: { links: number; warning_percent: number; near_or_over_warning: number };
+  path_overview: { targets: number; with_problems: number };
+  capacity_overview: { links: number; warning_percent: number; near_or_over_warning: number };
 }
 
 export interface ReportDetail {

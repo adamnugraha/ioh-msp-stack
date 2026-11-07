@@ -27,7 +27,7 @@ const STATE: Record<PathState | "partial", { text: string; tone: Tone }> = {
   bad: { text: "not answering", tone: "bad" },
   info: { text: "above its usual level", tone: "info" },
   unknown: { text: "no data yet", tone: "neutral" },
-  partial: { text: "one point only", tone: "neutral" },
+  partial: { text: "some points only, so not the path", tone: "neutral" },
 };
 
 const ms = (v: number | null) => (v === null ? "" : v >= 1000 ? `${(v / 1000).toFixed(2)} s` : `${v < 10 ? v.toFixed(1) : Math.round(v)} ms`);

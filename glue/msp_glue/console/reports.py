@@ -420,6 +420,10 @@ def _row_out(r) -> dict:
     out["updated"] = datetime.fromtimestamp(out["updated"], data.tz())
     out["approved_at"] = datetime.fromtimestamp(out["approved_at"], data.tz()) if out["approved_at"] else None
     out["busy"] = (out["customer"], out["month"]) in _busy
+    if out["status"] == "drafting" and not out["busy"]:
+        # the console stopped while it was drafting this one
+        out["status"] = "failed"
+        out["error"] = out["error"] or "The draft was interrupted (the console restarted). Draft it again."
     return out
 
 
