@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="{{ lang }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>{{ w.title }}: {{ name }}, {{ label }}</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<style>
+  @page { size: A4; margin: 16mm 15mm; }
+  :root { --ink: #1F2026; --red: #E4002B; --muted: #5b5f6b; --line: #d9dbe1; --soft: #f4f5f7; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #fff; color: var(--ink); font: 10.5pt/1.5 Calibri, Carlito, "Segoe UI", Arial, sans-serif; }
+  main { max-width: 186mm; margin: 0 auto; }
+  h1, h2 { font-family: Cambria, Caladea, Georgia, serif; font-weight: 700; margin: 0; }
+  h1 { font-size: 19pt; line-height: 1.2; }
+  h2 { font-size: 12.5pt; margin: 7mm 0 2mm; padding-bottom: 1mm; border-bottom: 2px solid var(--red); break-after: avoid; }
+  p { margin: 0 0 2mm; }
+  .meta { color: var(--muted); margin-top: 1mm; }
+  header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8mm; }
+  header img { max-height: 14mm; max-width: 48mm; }
+  .draft { margin: 5mm 0 0; padding: 2mm 3mm; border: 1.5px solid var(--red); color: var(--red); font-weight: 700; }
+  table { width: 100%; border-collapse: collapse; margin: 1mm 0 3mm; font-size: 9.5pt; break-inside: avoid; }
+  th, td { padding: 1.4mm 2mm; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  th { background: var(--soft); font-weight: 600; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .bad { color: #b3001f; font-weight: 600; }
+  ul { margin: 0 0 2mm; padding-left: 5mm; }
+  footer { margin-top: 9mm; padding-top: 2mm; border-top: 1px solid var(--line); color: var(--muted); font-size: 8.5pt; }
+  @media screen {
+    body { background: #e9ebef; }
+    main { background: #fff; margin: 6mm auto; padding: 14mm 15mm; box-shadow: 0 1px 4px rgba(0, 0, 0, .15); }
+  }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <div>
+    <h1>{{ w.title }}</h1>
+    <div class="meta">{{ name }} &middot; {{ label }}</div>
+  </div>
+  {% if logo %}<img src="/ui/brand/logo" alt="">{% endif %}
+</header>
+{% if draft %}<p class="draft">{{ w.draft }}</p>{% endif %}
+
+<h2>{{ w.summary }}</h2>
+<p>{{ n.summary }}</p>
+
+{% set a = f.availability %}
+<h2>{{ w.availability }}</h2>
+{% if n.availability %}<p>{{ n.availability }}</p>{% endif %}
+<table>
+  <tr><th>{{ w.target }}</th><th>{{ w.achieved }}</th><th>{{ w.downtime }}</th><th>{{ w.previous }}</th></tr>
+  <tr>
+    <td class="num">{{ num(a.target_percent) }}%</td>
+    <td class="num{% if a.met is sameas false %} bad{% endif %}">{{ num(a.achieved_percent, 3) }}{% if a.achieved_percent is not none %}%{% endif %}</td>
+    <td class="num">{{ num(a.downtime_minutes, 1) }}</td>
+    <td class="num">{{ num(a.previous_month_percent, 3) }}{% if a.previous_month_percent is not none %}%{% endif %}</td>
+  </tr>
+</table>
+{% if f.problems and f.problems.longest %}
+<table>
+  <tr><th colspan="4">{{ w.longest }}</th></tr>
+  <tr><th>{{ w.device }}</th><th>{{ w.problem }}</th><th>{{ w.started }}</th><th class="num">{{ w.minutes }}</th></tr>
+  {% for p in f.problems.longest %}
+  <tr><td>{{ p.device }}</td><td>{{ p.problem }}</td><td>{{ p.started[:16] | replace("T", " ") }}</td><td class="num">{{ num(p.minutes, 0) }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+{% set t = f.tickets %}
+<h2>{{ w.service }}</h2>
+{% if n.service %}<p>{{ n.service }}</p>{% endif %}
+<table>
+  <tr><th>{{ w.opened }}</th><th>{{ w.solved }}</th><th>{{ w.breaches }}</th><th>{{ w.mttr }}</th></tr>
+  <tr>
+    <td class="num">{{ t.opened }}</td><td class="num">{{ t.solved }}</td>
+    <td class="num{% if t.service_level_breaches %} bad{% endif %}">{{ t.service_level_breaches }}</td>
+    <td class="num">{{ num(t.mean_hours_to_resolve, 1) }}</td>
+  </tr>
+</table>
+
+{% if f.paths and f.paths is sequence and f.paths | length %}
+<h2>{{ w.paths }}</h2>
+{% if n.paths %}<p>{{ n.paths }}</p>{% endif %}
+<table>
+  <tr><th>{{ w.collector }}</th><th>{{ w.target_col }}</th><th>{{ w.segment }}</th><th class="num">{{ w.delay }}</th>
+      <th class="num">{{ w.loss }}</th><th class="num">{{ w.web }}</th><th class="num">{{ w.issues }}</th></tr>
+  {% for p in f.paths %}
+  <tr><td>{{ p.collector }}</td><td>{{ p.target }}</td><td>{{ w.segments.get(p.segment, p.segment) }}</td>
+      <td class="num">{{ num(p.delay_ms or p.connect_ms, 1) }}</td><td class="num">{{ num(p.loss_percent, 2) }}</td>
+      <td class="num">{{ num(p.web_ms, 0) }}</td><td class="num">{{ p.problems }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+{% if f.capacity and f.capacity is sequence and f.capacity | length %}
+<h2>{{ w.capacity }}</h2>
+{% if n.capacity %}<p>{{ n.capacity }}</p>{% endif %}
+<table>
+  <tr><th>{{ w.link }}</th><th class="num">{{ w.capacity_col }}</th><th class="num">{{ w.busy }}</th>
+      <th class="num">{{ w.use }}</th><th class="num">{{ w.days }}</th></tr>
+  {% for c in f.capacity %}
+  <tr><td>{{ c.device }} {{ c.interface }}{% if c.circuit %} ({{ c.circuit }}){% endif %}</td>
+      <td class="num">{{ num(c.capacity_mbps, 1) }}</td><td class="num">{{ num(c.busy_hour_mbps, 1) }}</td>
+      <td class="num{% if c.status == 'over' %} bad{% endif %}">{{ num(c.utilisation_percent, 1) }}</td>
+      <td class="num">{{ num(c.days_to_warning, 0) }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+{% set c = f.configuration %}
+{% if c.devices_checked %}
+<h2>{{ w.configuration }}</h2>
+<table>
+  <tr><th>{{ w.checked }}</th><th>{{ w.compliant }}</th><th>{{ w.backups }}</th></tr>
+  <tr><td class="num">{{ c.devices_checked }}</td><td class="num">{{ num(c.compliant_percent, 0) }}</td>
+      <td class="num">{{ num(c.backups_fresh_percent, 0) }}</td></tr>
+</table>
+{% endif %}
+
+{% if n.recommendations %}
+<h2>{{ w.recommendations }}</h2>
+<ul>{% for r in n.recommendations %}<li>{{ r }}</li>{% endfor %}</ul>
+{% endif %}
+
+<footer>
+  {{ w.footer }}{% if used_model %} {{ w.model }}.{% endif %}{% if approved %} {{ approved }}{% endif %}
+</footer>
+</main>
+</body>
+</html>

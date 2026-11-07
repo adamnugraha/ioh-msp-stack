@@ -19,6 +19,7 @@
 #   console   the MSP Console on https://console.<domain> (needs sso)
 #   sso-tools [grafana forgejo nautobot semaphore zabbix]   staff sign in to the tools with Keycloak too
 #   chat telegram|teams|email|test|off   problems on managed devices to the NOC chat (Versus Incident)
+#   ai [model]|off   a language model on this server for the monthly reports and Investigate (Ollama)
 #   certs <fullchain.pem> <privkey.pem>   use IOH certificates instead of Caddy's own (certs internal: back)
 #   dns [--wait MINUTES]   direct access: does every name point at this server? (proxy checks it too)
 #   samples [off]   two made-up customers with simulated devices, to practise on (off: stop monitoring them)
@@ -43,10 +44,10 @@ KIT_DIR=$(pwd)
 STATE_FILE=.install-state
 LOG_FILE=install.log
 CORE_STAGES=(preflight settings network images start glpi-api forgejo-admin tokens platform glue harden check)
-ALL_STAGES=("${CORE_STAGES[@]}" proxy grafana sso gate console sso-tools chat)
+ALL_STAGES=("${CORE_STAGES[@]}" proxy grafana sso gate console sso-tools chat ai)
 PROXY_NAMES="glpi nautobot zabbix semaphore git glue console grafana sso"   # every site in the Caddyfile
 NAUTOBOT_TAG=msp/nautobot:3.2.6-gc3.0.8
-GLUE_TAG=msp/glue:1.2
+GLUE_TAG=msp/glue:1.3
 GRAFANA_PLUGIN_VERSION=6.8.0
 
 # ----------------------------------------------------------------------------- output
@@ -1520,6 +1521,56 @@ chat_test() {  # one test message through Versus to every channel that is switch
   fi
 }
 
+stage_ai() {  # ai [model] | ai off: a language model on this server (Ollama) for report drafts and Investigate
+  local arg=${1:-} model mem image ca=""
+  step "Language model on this server (Ollama, on the processor)"
+  load_env
+  if [ "$arg" = off ]; then
+    dc stop ollama >/dev/null 2>&1 || true
+    remove_profile ai
+    case "${CONSOLE_AI_URL:-}" in
+      http://ollama:11434*) set_env CONSOLE_AI_URL ""; set_env CONSOLE_AI_MODEL "" ;;
+    esac
+    if [ -n "$(container_of msp-console)" ]; then dc_up msp-console || true; fi
+    ok "the model is off: report drafts use fixed sentences and Investigate is off (the downloaded model stays in the volume ai_models)"
+    return 0
+  fi
+  model=${arg:-${AI_MODEL:-qwen3:8b}}
+  [[ "$model" =~ ^[A-Za-z0-9._/:-]+$ ]] || fail "'$model' is not a model name" "./scripts/install.sh ai qwen3:8b"
+  mem=$(awk '/MemAvailable/ {print int($2 / 1048576)}' /proc/meminfo)
+  if [ "${mem:-0}" -lt 7 ]; then
+    warn "only ${mem:-?} GB of memory is free now; a model of 8 billion parameters needs about 6 GB while it writes" \
+      "add memory, or use a smaller model: ./scripts/install.sh ai qwen3:4b"
+  fi
+  set_env AI_MODEL "$model"
+  set_env AI_HTTPS_PROXY "${HTTPS_PROXY:-${https_proxy:-}}"
+  if [ -z "${CA_FILE:-}" ] && [ -f /usr/local/share/ioh-msp/proxy-ca.pem ]; then ca=/usr/local/share/ioh-msp/proxy-ca.pem; fi
+  rm -f components/ai/certs/custom-ca-*.crt
+  if [ -n "${CA_FILE:-$ca}" ]; then split_ca "${CA_FILE:-$ca}" components/ai/certs; info "model downloads trust the proxy's certificate authority too"; fi
+  add_profile ai
+  load_env
+  image=${AI_IMAGE:-ollama/ollama:0.40.11}
+  docker pull -q "$image" >/dev/null 2>&1 || docker image inspect "$image" >/dev/null 2>&1 ||
+    fail "the Ollama image $image could not be downloaded (about 3.5 GB)" \
+      "the Docker service needs access to Docker Hub (behind a web proxy: sudo ./scripts/prepare-server.sh ... --proxy <proxy URL>)"
+  dc_up ollama || fail "Ollama did not start" "docker compose logs --tail 30 ollama"
+  wait_for "Ollama" 180 "docker compose logs --tail 30 ollama" health_is ollama healthy
+  info "downloading $model into the volume ai_models (about 5 GB for 8 billion parameters; this can take a while)"
+  dc exec -T ollama ollama pull "$model" >/dev/null ||
+    fail "Ollama could not download $model" \
+      "check the name on ollama.com/library, and that this server reaches registry.ollama.ai (docker compose logs --tail 30 ollama)"
+  ok "$model is on this server"
+  set_env CONSOLE_AI_URL "http://ollama:11434/v1"
+  set_env CONSOLE_AI_MODEL "$model"
+  if [[ ",${COMPOSE_PROFILES:-}," == *,console,* ]]; then
+    dc_up msp-console || fail "the MSP Console did not restart" "docker compose logs --tail 50 msp-console"
+    ok "the MSP Console uses $model for report drafts and Investigate"
+  else
+    info "the console is not on yet; ./scripts/install.sh console picks the model up"
+  fi
+  info "A test answer: docker compose exec ollama ollama run $model 'Reply with OK'"
+}
+
 # Two made-up customers with simulated devices (the lab's), so the console has something to show:
 # PT ACME Retail Indonesia (acme) with a router, a server and a planned switch, and PT Bank Contoh Tbk
 # (bankx) with a router behind its own edge collector. "samples off" sets their devices Offline in
@@ -1754,7 +1805,7 @@ stage_certs() {  # certs <fullchain.pem> <privkey.pem>, or certs internal
 }
 
 # ======================================================================= driver
-usage() { sed -n '3,38p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,39p' "$0" | sed 's/^# \{0,1\}//'; }
 
 show_status() {
   step "Installation status ($KIT_DIR)"
@@ -1839,6 +1890,17 @@ main() {
         CURRENT_STAGE=""
       else
         run_stage chat "$@"
+      fi
+      ;;
+    ai)
+      shift
+      if [ "${1:-}" = off ]; then
+        CURRENT_STAGE=ai
+        stage_ai off
+        unmark ai
+        CURRENT_STAGE=""
+      else
+        run_stage ai "$@"
       fi
       ;;
     certs)

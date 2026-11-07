@@ -29,7 +29,7 @@ x-tool-access: &tool-access
 
 services:
   msp-glue:
-    image: msp/glue:1.2
+    image: msp/glue:1.3
     build:
       context: ../../glue
     restart: unless-stopped
@@ -75,7 +75,7 @@ services:
   # The MSP Console at https://console.<MSP_DOMAIN>. Separate from msp-glue, so a problem in the web
   # interface never stops webhooks or the reconciliation. No published port: only Caddy reaches it.
   msp-console:
-    image: msp/glue:1.2
+    image: msp/glue:1.3
     profiles: [console]
     restart: unless-stopped
     command: ["mspctl", "console", "--port", "8000"]
@@ -87,15 +87,18 @@ services:
       CONSOLE_DATA_DIR: /data
       # The operator's logo (branding/logo.svg or logo.png), shown in the console's side bar
       CONSOLE_BRANDING_DIR: /branding
-      # Investigate (off until set): an OpenAI-compatible model endpoint, for example http://ollama:11434/v1
+      # Investigate and the monthly report text (off until set): an OpenAI-compatible model endpoint, for example
+      # http://ollama:11434/v1 (./scripts/install.sh ai)
       CONSOLE_AI_URL: ${CONSOLE_AI_URL:-}
       CONSOLE_AI_MODEL: ${CONSOLE_AI_MODEL:-}
       CONSOLE_AI_KEY: ${CONSOLE_AI_KEY:-}
+      # Monthly customer reports: drafted at night on the first day of the month (off: only on request)
+      CONSOLE_REPORT_SCHEDULE: ${CONSOLE_REPORT_SCHEDULE:-on}
       # Tools that sign staff in through Keycloak ("./scripts/install.sh sso-tools" sets this)
       SSO_TOOLS: ${SSO_TOOLS:-}
     volumes:
       - ../../glue/mappings.yaml:/app/mappings.yaml:ro
-      # Audit trail and sessions (SQLite); included in ./scripts/backup.sh
+      # Audit trail, sessions and monthly reports (SQLite), and msp-glue's capacity forecast; in ./scripts/backup.sh
       - console_data:/data
       - ../../branding:/branding:ro
     healthcheck:

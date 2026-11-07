@@ -1,0 +1,41 @@
+# Optional language model on this server (profile "ai", kit 1.6.0): Ollama, on the processor, no graphics card
+# needed. The MSP Console uses it for the monthly report drafts and for Investigate. Customer data stays on this
+# server. "./scripts/install.sh ai" switches it on, downloads the model (AI_MODEL in .env) and points the console
+# at it; "./scripts/install.sh ai off" switches it off again.
+#
+# Size: a model of about 8 billion parameters needs about 6 GB of free memory while it writes and 5 GB of disk.
+# On a processor it writes a monthly report in a few minutes, which is why the drafts are made at night. For
+# live use (Investigate), point CONSOLE_AI_URL at a server with a graphics card or at IOH's inference service.
+services:
+  ollama:
+    image: ${AI_IMAGE:-ollama/ollama:0.40.11}
+    profiles: [ai]
+    restart: unless-stopped
+    environment:
+      OLLAMA_KEEP_ALIVE: 10m           # free the memory 10 minutes after the last request
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      # Model downloads go through the server's web proxy when there is one (the ai stage fills these in), and
+      # trust a TLS-inspecting proxy's certificate authority from ./certs as well as the usual ones.
+      HTTPS_PROXY: ${AI_HTTPS_PROXY:-}
+      NO_PROXY: localhost,127.0.0.1
+      SSL_CERT_DIR: /etc/ssl/certs:/usr/local/share/msp-ca
+      TZ: ${TZ}
+    volumes:
+      - ai_models:/root/.ollama
+      - ./certs:/usr/local/share/msp-ca:ro
+    # No published port: only the console reaches it, on the platform network.
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks: [msp]
+
+volumes:
+  ai_models:
+
+networks:
+  msp:
+    external: true
+    name: msp

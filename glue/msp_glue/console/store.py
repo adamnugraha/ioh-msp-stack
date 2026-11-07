@@ -1,4 +1,4 @@
-"""The console's own data: the audit trail and the signed-in sessions, in one SQLite file.
+"""The console's own data: the audit trail, the signed-in sessions and the monthly reports, in one SQLite file.
 
 The file lives in the console_data volume (CONSOLE_DATA_DIR, default /data/console.db) and is part of
 the nightly backup. Nothing in it is a password: sessions hold Keycloak tokens that only work together
@@ -39,6 +39,23 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 CREATE INDEX IF NOT EXISTS audit_at ON audit (at);
 CREATE INDEX IF NOT EXISTS audit_customer ON audit (customer, at);
+CREATE TABLE IF NOT EXISTS reports (
+    customer    TEXT NOT NULL,
+    month       TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'drafting',
+    language    TEXT NOT NULL DEFAULT 'id',
+    facts       TEXT NOT NULL DEFAULT '{}',
+    narrative   TEXT NOT NULL DEFAULT '{}',
+    flags       TEXT NOT NULL DEFAULT '[]',
+    writer      TEXT NOT NULL DEFAULT '',
+    error       TEXT NOT NULL DEFAULT '',
+    created     REAL NOT NULL,
+    updated     REAL NOT NULL,
+    edited_by   TEXT NOT NULL DEFAULT '',
+    approved_by TEXT NOT NULL DEFAULT '',
+    approved_at REAL,
+    PRIMARY KEY (customer, month)
+);
 CREATE TABLE IF NOT EXISTS sessions (
     sid        TEXT PRIMARY KEY,
     sub        TEXT NOT NULL,
@@ -59,6 +76,13 @@ MIGRATIONS = [("sessions", "address", "TEXT NOT NULL DEFAULT ''")]
 
 def path():
     return settings.console_data_dir / "console.db"
+
+
+@contextmanager
+def db():
+    """A connection to console.db (the reports module keeps its table here too)."""
+    with _db() as conn:
+        yield conn
 
 
 @contextmanager
