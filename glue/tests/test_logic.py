@@ -170,7 +170,8 @@ def test_single_device_sync_keeps_every_device_in_the_inventory(monkeypatch):
             return {"devices": rows}
 
     class Zabbix:
-        def managed_hosts(self):
+        def managed_hosts(self, tenant=""):
+            assert tenant == "acme"   # only this customer's hosts, not every host on the platform
             return []
 
     @contextmanager

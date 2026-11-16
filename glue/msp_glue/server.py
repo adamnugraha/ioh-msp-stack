@@ -95,17 +95,22 @@ def _scheduler() -> None:
     time.sleep(30)
     last_compliance = 0.0
     while True:
-        enqueue("reconcile", reconcile)
+        # A reconcile still waiting or running covers this round too; queueing another only delays webhooks.
+        if not _pending("reconcile"):
+            enqueue("reconcile", reconcile)
         if time.time() - last_compliance >= settings.compliance_interval:
             enqueue("compliance", compliance.run)
             last_compliance = time.time()
         try:
-            if capacity.due() and not any(r["name"] == "capacity" and r["status"] in ("queued", "running")
-                                          for r in _history):
+            if capacity.due() and not _pending("capacity"):
                 enqueue("capacity", capacity.run)
         except Exception:  # noqa: BLE001 - a broken results file must not stop the reconcile
             log.exception("Capacity schedule check failed")
         time.sleep(max(60, settings.reconcile_interval))
+
+
+def _pending(name: str) -> bool:
+    return any(r["name"] == name and r["status"] in ("queued", "running") for r in _history)
 
 
 def enqueue(name: str, func, *args, requested_by: str = "") -> dict:
