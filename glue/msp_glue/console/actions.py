@@ -33,7 +33,8 @@ CHANGE_FINISHED = {5, 6, 8, 13, 14}
 # How long the console waits for a playbook's result before it says so in the ticket (patching takes a while).
 PLAYBOOK_WAIT_SECONDS = 4 * 3600
 _VAR_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
-RESERVED_VARIABLES = {"glpi_ticket_id", "glpi_change_id", "msp_console_user"}
+# Set by the console from the form, never typed in: "device" is the playbooks' target (hosts: "{{ device }}").
+RESERVED_VARIABLES = {"glpi_ticket_id", "glpi_change_id", "msp_console_user", "device"}
 
 
 class ActionError(Exception):
@@ -363,7 +364,8 @@ def run_playbook(user: User, code: str, template_id: str, devices: list[str], it
     reference = f"{item_type} #{item_number}"
     if _duplicate(user, "playbook", target, reference):
         raise ActionError("You started the same run a moment ago. Check the task list before starting it again.")
-    extra = {f"glpi_{item_type.lower()}_id": item_number, "msp_console_user": user.email, **variables}
+    extra = {**variables, f"glpi_{item_type.lower()}_id": item_number, "msp_console_user": user.email,
+             "device": ",".join(devices)}
     entry = store.record(user.as_dict(), "playbook", customer=code, target=target, ticket=reference, reason=reason,
                          outcome="started", detail={"template": template["name"], "devices": devices,
                                                     "variables": variables}, address=address)
