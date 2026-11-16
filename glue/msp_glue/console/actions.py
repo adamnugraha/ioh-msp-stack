@@ -33,7 +33,8 @@ CHANGE_FINISHED = {5, 6, 8, 13, 14}
 # How long the console waits for a playbook's result before it says so in the ticket (patching takes a while).
 PLAYBOOK_WAIT_SECONDS = 4 * 3600
 _VAR_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
-RESERVED_VARIABLES = {"glpi_ticket_id", "glpi_change_id", "msp_console_user"}
+# Set by the console from the form, never typed in: "device" is the playbooks' target (hosts: "{{ device }}").
+RESERVED_VARIABLES = changes.NOT_SETTABLE | {"device"}
 
 
 class ActionError(Exception):
@@ -279,7 +280,7 @@ def parse_variables(text: str) -> dict[str, str]:
         key = key.strip()
         if not sep or not _VAR_NAME.match(key):
             raise ActionError(f"Variables, line {number}: write one 'name: value' per line.")
-        if key in RESERVED_VARIABLES or key.lower().startswith("ansible_"):
+        if key in RESERVED_VARIABLES or not changes.settable(key):
             raise ActionError(f"The variable {key} cannot be set here.")
         out[key] = value.strip()[:500]
     if len(out) > 20:
@@ -287,15 +288,18 @@ def parse_variables(text: str) -> dict[str, str]:
     return out
 
 
+def _ancestors(g, entity_id: int):
+    """entity_id, then each GLPI entity above it (at most 12), read from GLPI only as far as the caller needs."""
+    for _ in range(12):
+        if entity_id <= 0:
+            return
+        yield entity_id
+        entity_id = int(g.get("Entity", entity_id).get("entities_id") or 0)
+
+
 def _in_entity(g, entity_id: int, customer_entity: int) -> bool:
     """True when entity_id is the customer's entity or one below it."""
-    for _ in range(12):
-        if entity_id == customer_entity:
-            return True
-        if entity_id <= 0:
-            return False
-        entity_id = int(g.get("Entity", entity_id).get("entities_id") or 0)
-    return False
+    return customer_entity in _ancestors(g, entity_id)
 
 
 def check_itil(item_type: str, item_id: int, tenant, template_name: str) -> dict:
@@ -363,7 +367,8 @@ def run_playbook(user: User, code: str, template_id: str, devices: list[str], it
     reference = f"{item_type} #{item_number}"
     if _duplicate(user, "playbook", target, reference):
         raise ActionError("You started the same run a moment ago. Check the task list before starting it again.")
-    extra = {f"glpi_{item_type.lower()}_id": item_number, "msp_console_user": user.email, **variables}
+    extra = {**variables, f"glpi_{item_type.lower()}_id": item_number, "msp_console_user": user.email,
+             "device": ",".join(devices)}
     entry = store.record(user.as_dict(), "playbook", customer=code, target=target, ticket=reference, reason=reason,
                          outcome="started", detail={"template": template["name"], "devices": devices,
                                                     "variables": variables}, address=address)
@@ -598,7 +603,8 @@ def post_note(user: User, item_type: str, item_id: int, text: str, address: str 
             raise ActionError(f"GLPI has no {item_type.lower()} #{item_id}.") from exc
         if int(item.get("is_deleted") or 0):
             raise ActionError(f"{item_type} #{item_id} is in the GLPI trash.")
-        tenant = next((t for e, t in entities.items() if _in_entity(g, int(item.get("entities_id") or 0), e)), None)
+        # One walk up from the ticket's entity, not one per customer: the nearest customer entity wins.
+        tenant = next((entities[e] for e in _ancestors(g, int(item.get("entities_id") or 0)) if e in entities), None)
         if not tenant:
             raise ActionError(f"{item_type} #{item_id} does not belong to a managed customer.")
         entry = store.record(user.as_dict(), "investigation note", customer=tenant.code,

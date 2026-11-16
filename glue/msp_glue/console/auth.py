@@ -86,10 +86,6 @@ class User:
         return MANAGER in self.roles
 
     @property
-    def is_engineer(self) -> bool:
-        return ENGINEER in self.roles
-
-    @property
     def can_act(self) -> bool:
         """Acknowledge problems, re-sync customers, start configuration checks."""
         return ENGINEER in self.roles

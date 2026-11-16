@@ -89,7 +89,7 @@ def add_user(code: str, login: str, email: str = "", full_name: str = "", grafan
 
 def _grafana_viewer(tenant: Tenant, login: str, email: str, name: str) -> str:
     gf = Grafana(settings.grafana_url, settings.grafana_admin_user, settings.grafana_admin_password)
-    org_id = gf.ensure_org(tenant.name)
+    org_id = gf.ensure_org(tenant.name, dashboards.dashboard_uid(tenant))
     user = gf.request("GET", f"users/lookup?loginOrEmail={login}", ok404=True)
     message = "existing account"
     if not user:

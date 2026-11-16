@@ -67,14 +67,16 @@ class Semaphore:
         return self.request("POST", f"project/{project_id}/{kind}", body)["id"]
 
     def ensure_key(self, project_id: int, name: str, key_type: str = "none", login: str = "", secret: str = "",
-                   private_key: str = "") -> int:
+                   private_key: str = "", update: bool = False) -> int:
         payload: dict[str, Any] = {"type": key_type}
         if key_type == "login_password":
             payload["login_password"] = {"login": login, "password": secret}
         elif key_type == "ssh":
             payload["ssh"] = {"login": login, "private_key": private_key, "passphrase": ""}
-        # Keys are write-only in Semaphore; do not overwrite an existing key on every run.
-        return self._ensure_named(project_id, "keys", name, payload, update=False)
+        # Keys are write-only in Semaphore, so an existing key is only overwritten when the caller asks.
+        # Without override_secret Semaphore keeps the old secret on an update.
+        payload["override_secret"] = update
+        return self._ensure_named(project_id, "keys", name, payload, update=update)
 
     def ensure_repository(self, project_id: int, name: str, git_url: str, branch: str, key_id: int) -> int:
         return self._ensure_named(project_id, "repositories", name,

@@ -69,7 +69,7 @@ def sync_tenant(tenant: Tenant, only_device_id: str | None = None) -> SyncReport
     all_devices = nb.graphql(DEVICES_QUERY, {"tenant": [tenant.name]})["devices"]
     devices = [d for d in all_devices if d["id"] == only_device_id] if only_device_id else all_devices
     z = clients.zabbix()
-    existing = {_tag(h, "nautobot_id"): h for h in z.managed_hosts() if _tag(h, "tenant") == tenant.code}
+    existing = {_tag(h, "nautobot_id"): h for h in z.managed_hosts(tenant=tenant.code)}
     ctx = _Context(tenant=tenant, z=z, templates_cache={}, dropdown_cache={})
 
     with clients.glpi() as g:
@@ -118,14 +118,13 @@ def retire_device(device_id: str) -> None:
     """Called when a device is deleted in Nautobot: disable its Zabbix host, mark the GLPI asset and take it
     out of the customer's Ansible inventory."""
     z = clients.zabbix()
-    for host in z.managed_hosts():
-        if _tag(host, "nautobot_id") == device_id:
-            with clients.glpi() as g:
-                _retire_host(_Context(tenant=None, z=z, g=g, templates_cache={}, dropdown_cache={}), host)
-            code = _tag(host, "tenant")
-            tenant = next((t for t in managed_tenants() if t.code == code), None) if code else None
-            if tenant:
-                _push_inventory(tenant, clients.nautobot().graphql(DEVICES_QUERY, {"tenant": [tenant.name]})["devices"])
+    for host in z.managed_hosts(nautobot_id=device_id):
+        with clients.glpi() as g:
+            _retire_host(_Context(tenant=None, z=z, g=g, templates_cache={}, dropdown_cache={}), host)
+        code = _tag(host, "tenant")
+        tenant = next((t for t in managed_tenants() if t.code == code), None) if code else None
+        if tenant:
+            _push_inventory(tenant, clients.nautobot().graphql(DEVICES_QUERY, {"tenant": [tenant.name]})["devices"])
 
 
 # ============================================================================ internals

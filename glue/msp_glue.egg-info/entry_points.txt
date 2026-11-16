@@ -1,2 +1,0 @@
-[console_scripts]
-mspctl = msp_glue.cli:main

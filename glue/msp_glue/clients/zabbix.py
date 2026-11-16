@@ -161,12 +161,14 @@ class Zabbix:
         return self.call("proxy.create", params)["proxyids"][0]
 
     # ----------------------------------------------------------------- hosts
-    def managed_hosts(self, tag: str = "managed_by", value: str = "msp-glue") -> list[dict]:
+    def managed_hosts(self, **match: str) -> list[dict]:
+        """msp-glue's hosts; managed_hosts(tenant="acme") only that customer's (every named tag must match)."""
+        tags = [{"tag": k, "value": v, "operator": 1} for k, v in {"managed_by": "msp-glue", **match}.items()]
         return self.call(
             "host.get",
             {
                 "output": ["hostid", "host", "name", "status", "monitored_by", "proxyid", "proxy_groupid"],
-                "tags": [{"tag": tag, "value": value, "operator": 1}],
+                "tags": tags,
                 "selectTags": ["tag", "value"],
                 "selectHostGroups": ["groupid", "name"],
                 "selectParentTemplates": ["templateid", "host"],

@@ -22,6 +22,11 @@ log = logging.getLogger("msp_glue.dashboards")
 DASHBOARD_FILE = Path("/app/seed/grafana/customer-overview.json")
 
 
+def dashboard_uid(tenant: Tenant) -> str:
+    """The customer's overview dashboard; it also finds the customer's organisation after a rename."""
+    return f"msp-{tenant.code}-overview"
+
+
 def enabled() -> bool:
     return bool(settings.grafana_url and settings.grafana_admin_password)
 
@@ -30,7 +35,7 @@ def ensure_customer_dashboards(tenant: Tenant) -> int | None:
     if not enabled():
         return None
     gf = Grafana(settings.grafana_url, settings.grafana_admin_user, settings.grafana_admin_password)
-    org_id = gf.ensure_org(tenant.name)
+    org_id = gf.ensure_org(tenant.name, dashboard_uid(tenant))
     gf.ensure_admin_member(org_id)
     gf.enable_zabbix_app(org_id)
     datasource = gf.datasource(org_id, "Zabbix")
@@ -43,7 +48,7 @@ def ensure_customer_dashboards(tenant: Tenant) -> int | None:
         text = DASHBOARD_FILE.read_text(encoding="utf-8").replace("${DS_ZABBIX}", datasource["uid"])
         dashboard = json.loads(text)
         dashboard["title"] = f"{tenant.name}: service overview"
-        dashboard["uid"] = f"msp-{tenant.code}-overview"
+        dashboard["uid"] = dashboard_uid(tenant)
         gf.import_dashboard(org_id, dashboard)
     return org_id
 

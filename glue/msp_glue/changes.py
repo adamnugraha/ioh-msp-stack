@@ -31,12 +31,20 @@ log = logging.getLogger("msp_glue.changes")
 MARKER = "[msp-glue automation]"
 _VAR_LINE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+?)\s*$")
 _ANSI = re.compile(r"\x1b?\[[0-9;]*m")  # colour codes in Ansible output
+# Set by msp-glue or the console, never by a person (the console also reserves "device").
+NOT_SETTABLE = {"glpi_ticket_id", "glpi_change_id", "msp_console_user"}
+
+
+def settable(name: str) -> bool:
+    """Ansible's own variables (ansible_host, ansible_user, ...) could point a run at another host or account."""
+    return name not in NOT_SETTABLE and not name.lower().startswith("ansible_")
 
 
 def handle_change(change_id: int) -> str:
     with clients.glpi() as g:
-        change = g.get("Change", change_id, expand_dropdowns="true")
-        if int(_raw_status(g, change_id)) != CHANGE_ACCEPTED:
+        change = g.get("Change", change_id, expand_dropdowns="true")   # category as its full name
+        raw = g.get("Change", change_id)                                 # status and entity as numbers
+        if int(raw["status"]) != CHANGE_ACCEPTED:
             return "ignored: change is not in status Accepted"
         if int(change.get("global_validation") or 0) == VALIDATION_REFUSED:
             return "ignored: validation refused"
@@ -49,16 +57,14 @@ def handle_change(change_id: int) -> str:
         if not template_name:
             return f"ignored: category '{category}' has no automation"
 
-        entity_id = _raw_field(g, change_id, "entities_id")
+        entity_id = raw.get("entities_id")
         tenant = next((t for t in managed_tenants() if str(t.glpi_entity_id) == str(entity_id)), None)
         if not tenant or not tenant.semaphore_project_id:
             g.add_followup("Change", change_id, f"{MARKER} No Semaphore project for entity {entity_id}; not started.")
             return "error: no tenant"
 
         variables = parse_variables(change.get("content") or "")
-        # Ansible's own variables (ansible_host, ansible_user, ...) could point the run at another
-        # host or account, so they are never taken from a change description.
-        refused = sorted(k for k in variables if k.lower().startswith("ansible_") or k == "glpi_change_id")
+        refused = sorted(k for k in variables if not settable(k))
         for key in refused:
             variables.pop(key)
         sem = clients.semaphore()
@@ -85,14 +91,6 @@ def handle_change(change_id: int) -> str:
                        + (f" Ignored (not allowed in a change): {', '.join(refused)}." if refused else ""))
     threading.Thread(target=_report_result, args=(change_id, project_id, task["id"]), daemon=True).start()
     return f"started task {task['id']}"
-
-
-def _raw_status(g, change_id: int) -> int:
-    return int(g.get("Change", change_id)["status"])
-
-
-def _raw_field(g, change_id: int, name: str):
-    return g.get("Change", change_id).get(name)
 
 
 def parse_variables(content: str) -> dict:

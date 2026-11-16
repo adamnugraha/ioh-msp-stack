@@ -370,11 +370,11 @@ def ensure_semaphore(tenant: Tenant) -> int:
     git_user = _platform_secret("forgejo_username")
     git_token = _platform_secret("forgejo_token")
     git_key = sem.ensure_key(project_id, "forgejo-read", "login_password", login=git_user, secret=git_token)
-    device_key = sem.ensure_key(
-        project_id, "device-login", "login_password",
-        login=settings.tenant_secret(tenant.code, "device_username"),
-        secret=settings.tenant_secret(tenant.code, "device_password"),
-    )
+    login = settings.tenant_secret(tenant.code, "device_username")
+    password = settings.tenant_secret(tenant.code, "device_password")
+    # Rewritten on every sync once both files exist, so a new device password reaches the playbooks too.
+    device_key = sem.ensure_key(project_id, "device-login", "login_password", login=login, secret=password,
+                                update=bool(login and password))
     org, repo = sm["playbook_repo"].split("/", 1)
     repository_id = sem.ensure_repository(project_id, "playbooks", f"{settings.forgejo_url.rstrip('/')}/{org}/{repo}.git",
                                           sm["playbook_branch"], git_key)
