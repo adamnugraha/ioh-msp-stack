@@ -42,8 +42,9 @@ def settable(name: str) -> bool:
 
 def handle_change(change_id: int) -> str:
     with clients.glpi() as g:
-        change = g.get("Change", change_id, expand_dropdowns="true")
-        if int(_raw_status(g, change_id)) != CHANGE_ACCEPTED:
+        change = g.get("Change", change_id, expand_dropdowns="true")   # category as its full name
+        raw = g.get("Change", change_id)                                 # status and entity as numbers
+        if int(raw["status"]) != CHANGE_ACCEPTED:
             return "ignored: change is not in status Accepted"
         if int(change.get("global_validation") or 0) == VALIDATION_REFUSED:
             return "ignored: validation refused"
@@ -56,7 +57,7 @@ def handle_change(change_id: int) -> str:
         if not template_name:
             return f"ignored: category '{category}' has no automation"
 
-        entity_id = _raw_field(g, change_id, "entities_id")
+        entity_id = raw.get("entities_id")
         tenant = next((t for t in managed_tenants() if str(t.glpi_entity_id) == str(entity_id)), None)
         if not tenant or not tenant.semaphore_project_id:
             g.add_followup("Change", change_id, f"{MARKER} No Semaphore project for entity {entity_id}; not started.")
@@ -90,14 +91,6 @@ def handle_change(change_id: int) -> str:
                        + (f" Ignored (not allowed in a change): {', '.join(refused)}." if refused else ""))
     threading.Thread(target=_report_result, args=(change_id, project_id, task["id"]), daemon=True).start()
     return f"started task {task['id']}"
-
-
-def _raw_status(g, change_id: int) -> int:
-    return int(g.get("Change", change_id)["status"])
-
-
-def _raw_field(g, change_id: int, name: str):
-    return g.get("Change", change_id).get(name)
 
 
 def parse_variables(content: str) -> dict:
