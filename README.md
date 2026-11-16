@@ -1,509 +1,298 @@
-# IOH open-source managed services platform: build and integration kit
+<p align="center">
+  <img src="docs/assets/logo.svg" width="96" alt="IOH MSP Stack">
+</p>
 
-This kit builds a multi-customer platform for managed infrastructure and network services
-from open-source tools only:
+<h1 align="center">IOH MSP Stack</h1>
+
+<p align="center">
+  <em>Record a customer once in Nautobot, and every tool of the managed services platform follows.</em>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/kit-1.6.0-E4002B?style=flat-square" alt="Kit 1.6.0">
+  <img src="https://img.shields.io/badge/msp--glue-1.3.0-1F2026?style=flat-square" alt="msp-glue 1.3.0">
+  <img src="https://img.shields.io/badge/open--source%20tools-9-10b981?style=flat-square" alt="Nine open-source tools">
+  <img src="https://img.shields.io/badge/Ubuntu-24.04-38a3f5?style=flat-square" alt="Ubuntu 24.04">
+  <img src="https://img.shields.io/badge/Docker%20Compose-v2.20%2B-38a3f5?style=flat-square" alt="Docker Compose 2.20 or later">
+  <img src="https://img.shields.io/badge/Python-3.12-f5a524?style=flat-square" alt="Python 3.12">
+  <img src="https://img.shields.io/badge/console-React-a78bfa?style=flat-square" alt="Console in React">
+  <br>
+  <a href="https://github.com/adamnugraha/ioh-msp-stack/actions/workflows/images.yml"><img src="https://github.com/adamnugraha/ioh-msp-stack/actions/workflows/images.yml/badge.svg" alt="Image build and scan"></a>
+  <a href="https://github.com/adamnugraha/ioh-msp-stack/actions/workflows/zabbix-templates.yml"><img src="https://github.com/adamnugraha/ioh-msp-stack/actions/workflows/zabbix-templates.yml/badge.svg" alt="Path test templates against a real Zabbix"></a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/hero.png" width="900" alt="IOH MSP Stack: managed services for many customers from open-source tools. Nine open-source tools with no licence fees, about 20 seconds from a new device to monitoring and assets, one console over every tool with one staff sign-in, one Ubuntu 24.04 server with Docker to start. Beside it, the MSP Console's operations page with sample data.">
+</p>
+
+<p align="center">
+  <a href="#what-it-is">What it is</a> &middot;
+  <a href="#how-it-works">How it works</a> &middot;
+  <a href="#the-msp-console">The console</a> &middot;
+  <a href="#try-it-in-a-lab">Try it</a> &middot;
+  <a href="#install-on-a-server">Install</a> &middot;
+  <a href="#use-it-every-day">Use</a> &middot;
+  <a href="#extend-it">Extend</a> &middot;
+  <a href="#explore-the-code">Explore</a>
+</p>
+
+---
+
+## What it is
+
+IOH runs infrastructure and networks for many customers at once: banks, hospitals, retailers, factories. Each
+customer needs monitoring, a service desk with its own service levels, configuration backups, automation and a
+monthly report, and none of them may ever see another customer's data.
+
+This kit builds that platform on one server from open-source tools only, and adds the small piece that ties them
+together. An engineer creates the customer and its devices in Nautobot; the kit's integration service, msp-glue,
+creates everything else in every tool and keeps it right. The MSP Console then shows what every tool knows on one
+set of pages, behind one staff sign-in.
 
 | Role | Tool | Licence |
 |---|---|---|
 | Network source of truth, configuration backup and compliance | Nautobot 3.2 with Golden Config 3.0 | Apache 2.0 |
-| Monitoring, alerting and monthly availability per customer | Zabbix 7.0 LTS (8.0 LTS when released) | AGPL 3.0 |
+| Monitoring, alerting and monthly availability per customer | Zabbix 7.0 LTS | AGPL 3.0 |
 | Service desk, customer portal, service levels, asset register | GLPI 11 | GPL 3.0 |
 | Automation (Ansible and OpenTofu runs) | Semaphore UI Community 2.19 | MIT |
 | Git server for backups, templates and playbooks | Forgejo 12 | GPL 3.0 or later |
-| Integration service and the MSP Console (this kit) | msp-glue | IOH-owned code |
 | Customer dashboards (phase 3) | Grafana OSS 13 with the Zabbix plugin | AGPL 3.0 / Apache 2.0 |
 | Single sign-on for staff | Keycloak 26 | Apache 2.0 |
 | Chat alerts to Telegram, Microsoft Teams or e-mail | Versus Incident 1.4 | MIT |
-| Language model on the server for report text and Investigate (optional) | Ollama 0.40 with an open-weight model (Qwen3 8B by default) | MIT (Ollama), Apache 2.0 (Qwen3) |
+| Language model on the server for report text and Investigate (optional) | Ollama 0.40 with an open-weight model (Qwen3 8B by default) | MIT, Apache 2.0 |
+| **Integration service and the MSP Console** | **msp-glue (this kit)** | IOH-owned code |
 
-Phases follow the build plan in the guide: the core tools go in first, then the reverse proxy, then
-single sign-on, the MSP Console and chat alerts, and Grafana in phase 3. Tested versions: Nautobot
-3.2.6, Golden Config 3.0.8, Zabbix 7.0.31, GLPI 11.0.11, Semaphore 2.19.14, Forgejo 12.0.4, Grafana
-13.2.3 with Zabbix plugin 6.8.0, Keycloak 26.8.0, Versus Incident 1.4.13 (pinned in `.env.example`
-and the compose files; the Python packages of msp-glue in `glue/constraints.txt`).
+Tested versions are pinned in `.env.example` and the compose files: Nautobot 3.2.6, Golden Config 3.0.8, Zabbix
+7.0.31, GLPI 11.0.11, Semaphore 2.19.14, Forgejo 12.0.4, Grafana 13.2.3 with Zabbix plugin 6.8.0, Keycloak 26.8.0,
+Versus Incident 1.4.13. The Python packages of msp-glue are pinned in `glue/constraints.txt`.
 
-Nautobot is the master record. Engineers create a customer (tenant) and its devices in
-Nautobot; msp-glue then creates everything else: the customer's GLPI entity and service level
-rule, its Zabbix host groups, user group, settings template, proxy group and monthly
-availability report, its Git backup repository and Golden Config scope, its Semaphore project,
-and (phase 3) its Grafana organisation. Devices become Zabbix hosts and GLPI assets within
-about 20 seconds. Zabbix problems open GLPI incidents in the right customer entity; approved GLPI changes
-run Semaphore playbooks; Golden Config drift opens GLPI tickets; `mspctl user add` gives a
-customer user access to its own entity in GLPI and its own Grafana organisation.
+## How it works
 
-The MSP Console (`https://console.<domain>`) shows what every tool knows on one set of pages, with one
-sign-in through Keycloak. From kit 1.2.0 its pages are a React application (dark, with white text)
-that reads the console's own JSON interface (`/api/v1`):
+<p align="center">
+  <img src="docs/assets/architecture.png" width="900" alt="Architecture. NOC engineers and customers reach the platform over HTTPS through Caddy, which publishes one address per tool and lets engineers' tools answer only from staff networks. Keycloak gives staff one sign-in with the roles manager, engineer and automation. The MSP Console sends jobs to msp-glue, the integration service, which creates, repairs and links customers in Nautobot, GLPI, Semaphore, Forgejo, Grafana and Zabbix. Edge collectors at customer sites send to Zabbix over one outbound connection on port 10051. Versus Incident sends chat alerts; an optional Ollama model drafts notes. Underneath: PostgreSQL, MariaDB for GLPI, Valkey, a secrets folder that never goes into Git, and a nightly backup.">
+</p>
 
-* **Operations**: open problems of every customer, worst first, with their GLPI tickets and the notes
-  engineers added; tickets due next; today's changes and maintenance windows; msp-glue's job queue;
-  one row per customer across monitoring, tickets, changes, configuration, backups, automation and
-  availability.
-* **Customer pages**: devices; a network map from the cables and circuits recorded in Nautobot;
-  problems and tickets; changes and maintenance; Semaphore runs; the customer's audit trail; downtime
-  per day this month, exactly as its availability agreement in Zabbix counts it.
-* **Device pages**: Zabbix charts (response time, loss, CPU, memory, disks, traffic per interface,
-  from an hour to 30 days), interfaces with their cables and circuits, configuration backups from
-  Forgejo, Golden Config's rule-by-rule results (secrets masked), tickets, runs and maintenance.
-* **Service levels** for managers: availability against target, breaches, mean time to resolve,
-  compliance and backups, this month or the two before, with a CSV export.
-* **Path tests** (from 1.6.0), per customer: delay, loss and response time from each site collector to
-  IOH's edge router at the site, public reference points on the internet and the customer's
-  applications, and a verdict on which side a slowdown is on: IOH's link to the site, beyond IOH's
-  edge, or the application provider.
-* **Link capacity** (from 1.6.0), on the customer and operations pages: each circuit's busy hour
-  against its commit rate in Nautobot, with a four-week trend and the days left before 80 %. msp-glue
-  forecasts it every night and opens one GLPI ticket per link at risk.
-* **Monthly reports** (from 1.6.0): on the first night of each month the console drafts last month's
-  report for every customer, in Bahasa Indonesia or English, from the tools' figures. The text comes
-  from the console's model (fixed sentences without one); every number the data lacks is flagged; an
-  engineer or manager corrects and approves the draft, then prints it for the customer.
-* **Actions**, each checked against the person's roles and written to the audit trail before it
-  runs: acknowledge a problem (the note reaches the GLPI ticket), open a ticket, raise a GLPI change
-  with its window, risk and back-out plan, plan Zabbix maintenance (regulated customers need a
-  change), add a device to Nautobot, re-sync a customer, start a configuration check, and, with the
-  automation role, run a Semaphore playbook for an open ticket or an approved change.
-* **Investigate** (off until you give the console a model): the console reads Zabbix, Nautobot,
-  GLPI, Golden Config and Semaphore with its own accounts, an OpenAI-compatible model you run or IOH
-  has approved drafts the likely cause and next steps, and the engineer checks the draft before it
-  goes to the ticket as a private note.
+Three ideas carry the whole design:
 
-Staff sign in through Keycloak with three roles: manager, engineer and automation. From 1.2.0 the
-same account also signs them in to Nautobot, Zabbix (SAML), Semaphore, Forgejo and Grafana once
-`./scripts/install.sh sso-tools` has run, with the roles mapped to each tool's own groups; GLPI keeps
-its own log-in, and every tool keeps its local accounts for the platform's service accounts and as the
-way in when Keycloak is down.
+- **Nautobot is the record.** Customers are Nautobot tenants in the group "Managed Services Customers"; their
+  devices, sites, cables and circuits live there too. No other tool is edited by hand for a customer's set-up.
+- **msp-glue keeps everything else in step.** It reacts to Nautobot's and GLPI's webhooks within seconds, and every
+  10 minutes it runs a repair pass over every customer. Every step is safe to run again, so a tool that was down
+  simply catches up.
+- **Each customer is fenced off in every tool.** Its own GLPI entity, Zabbix host groups and read-only group,
+  Semaphore project, backup repository and Grafana organisation. A customer's Grafana data source can read only
+  that customer's hosts, even if someone edits a dashboard query.
 
-Chat alerts: problems of severity High or worse on managed devices go to the NOC's Telegram group,
-Teams channel or mailbox through Versus Incident, with the GLPI ticket, the Zabbix event and the
-console page linked; acknowledgements and recoveries follow. GLPI stays the record of every incident.
+<p align="center">
+  <img src="docs/assets/onboarding.png" width="900" alt="A tenant in Nautobot becomes a customer in every tool. From the tenant PT ACME Retail Indonesia, code acme, silver tier, msp-glue creates: in GLPI an entity, a requesters group and the service level rule of its tier; in Zabbix a host group, a settings template with the SNMP secrets, user groups and a monthly availability service level; in Forgejo the repository backups-acme; in Golden Config a secrets group, the scope of its active network devices and a nightly backup and compliance run; in Semaphore the project acme with keys, playbooks, inventory and templates; in Grafana an organisation, a restricted data source and the overview dashboard. Then every device, about 20 seconds after it is saved: a Zabbix host, a GLPI asset, a line in the Ansible inventory and a nightly backup with drift tickets.">
+</p>
 
-The full guide (architecture, every step, every integration, operations) is the document
-"IOH open-source managed services platform" that comes with this kit.
+When something breaks, the tools pass the problem along in order, and the customer's GLPI ticket collects every
+step:
 
-## Folder map
+<p align="center">
+  <img src="docs/assets/incident.png" width="900" alt="A problem from alert to fix. 1: Zabbix sees a problem of High or worse on a managed device, tagged with the customer, site and device. 2: GLPI opens an incident in the customer's own entity with the due times of its service tier. 3: After one quiet minute Versus Incident tells the NOC chat, with the ticket, the Zabbix event and the console page linked. 4: An engineer acknowledges in the MSP Console with a note that reaches the ticket, and Investigate drafts the likely cause. 5: A GLPI change is approved; its category names the playbook and its description the devices. 6: Semaphore runs the playbook on those devices only, and the start and the result go to the change. Recovery closes the loop.">
+</p>
 
-```
-compose.yaml                 single-host deployment (includes the files under components/)
-.env.example                 every setting and secret; copy with scripts/gen-env.sh
-components/                  one compose file per tool, so tools can be split across VMs
-  postgres/                  PostgreSQL, MariaDB (GLPI) and Valkey
-  nautobot/                  image with Golden Config, nautobot_config.py
-  zabbix/ glpi/ semaphore/ forgejo/ glue/
-  proxy/                     Caddy reverse proxy with TLS and network access rules (profile "proxy")
-  keycloak/                  single sign-on for staff (profile "sso")
-  gate/                      the sign-in gate for direct access, oauth2-proxy (profile "gate")
-  versus/                    chat alerts: settings and message templates (profile "chat")
-  grafana/                   phase 3 (profile "grafana")
-  ai/                        Ollama, a language model on the server's processor (profile "ai", from 1.6.0)
-edge-collector/              Zabbix proxy for a customer site (pre-shared key, outbound only)
-glue/                        msp-glue source: Python package, Dockerfile, mappings.yaml, unit tests;
-                             msp_glue/console/ is the MSP Console (profile "console")
-glue/console-ui/             the MSP Console front end from 1.2 on (React, TypeScript, shadcn/ui) and its
-                             preview with sample data; see its README
-branding/                    your logo for the console (the file stays out of Git; see its README)
-.github/workflows/           image builds (build, scan with Trivy, push to Docker Hub), and the path test
-                             templates tested against a real Zabbix 7.0 with lab/check_paths.py
-zabbix/media/                Zabbix webhooks "GLPI MSP" and "Versus chat" (JavaScript sources, importable YAML)
-zabbix/templates/            the path test templates msp-glue imports into Zabbix (from 1.6.0)
-golden-config/               starter content of the shared Golden Config Git repository
-semaphore/playbooks/         starter content of the shared playbook Git repository
-grafana/                     customer dashboard template
-scripts/                     prepare-server.sh (Docker, address pool, firewall), install.sh (the installer),
-                             autoinstall.sh (everything at once, unattended) and its settings reader,
-                             sso-gate.py (the gate's Keycloak client), add-customer-secrets.sh, gen-env.sh,
-                             backup.sh, build-mediatype.py
-tenants/README.md            how customer secrets are stored (in secrets/, never in Git)
-lab/                         simulated devices, sample data, run-lab.sh and check.py (the sample
-                             customers of install.sh samples come from here too)
-environments/                where the server runs: Google Cloud and AWS (a script creates the server),
-                             a VPS, IOH's private cloud; the two ways in outside IOH (a Cloudflare Tunnel,
-                             or direct access); the automatic install's settings file and bootstrap.sh
-VERSION                      the kit's version
-```
+Configuration drift found by Golden Config opens its own GLPI tickets, and a link forecast to reach 80 % of its
+commit rate within 45 days opens a capacity ticket.
 
-## Try it in a lab first
+## The MSP Console
 
-Needs a Linux machine or VM with Docker (Compose v2.20+), 4 vCPU, 8 GB RAM, 40 GB disk, and
-Internet access for the first build (Docker Hub, PyPI, grafana.com). It also runs on 2 vCPU; the first
-start then takes longer (Nautobot's database migration alone took 10 minutes in testing).
+`https://console.<domain>` shows every tool on one set of pages. Staff sign in once through Keycloak; every action
+checks the person's role and is written to the console's audit trail before it runs. The pictures below are the
+console's own preview, with the kit's made-up sample data.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/console/overview.png" alt="Operations page: open problems worst first, tickets due next, devices down, changes today and the integration service's state."></td>
+    <td width="50%"><img src="docs/assets/console/network-map.png" alt="A customer's network map, drawn from the cables and circuits in Nautobot, with each device's state from Zabbix."></td>
+  </tr>
+  <tr>
+    <td><b>Operations.</b> Open problems of every customer, worst first, with their tickets; tickets due next; devices down; today's changes; msp-glue's job queue.</td>
+    <td><b>Customer pages.</b> Devices, a network map from Nautobot's cables and circuits, problems and tickets, changes, automation runs and the customer's audit trail.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/console/device.png" alt="A device page: the open problem and Zabbix charts for response time, loss, CPU and memory, from one hour to 30 days."></td>
+    <td><img src="docs/assets/console/path-tests.png" alt="Path tests from a site collector: delay, loss and web response time to IOH's edge, internet reference points and the customer's applications."></td>
+  </tr>
+  <tr>
+    <td><b>Device pages.</b> Zabbix charts from an hour to 30 days, interfaces with their cables and circuits, configuration backups and Golden Config's results with secrets masked.</td>
+    <td><b>Path tests.</b> From each site collector to IOH's edge, the internet and the customer's applications, with a verdict on which side a slowdown is.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/console/investigate.png" alt="Investigate: the console reads Zabbix, Nautobot, GLPI, Forgejo and Semaphore and shows what it looked at before a model drafts the likely cause."></td>
+    <td><img src="docs/assets/console/service-levels.png" alt="Service levels: customers on target, tickets, breaches, time to resolve, compliance and backups, with each customer's error budget."></td>
+  </tr>
+  <tr>
+    <td><b>Investigate.</b> The console reads the tools with its own accounts and a model you run drafts the cause; the engineer checks it before it goes to the ticket.</td>
+    <td><b>Service levels.</b> Availability against target, breaches, time to resolve, compliance and backups for this month or the two before, with a CSV export.</td>
+  </tr>
+</table>
+
+The console also drafts each customer's **monthly report** on the first night of the month, in Bahasa Indonesia or
+English; an engineer or manager corrects and approves it before it goes out, and every number the data does not
+contain is flagged.
+
+To click through the preview yourself:
 
 ```bash
-./lab/run-lab.sh                       # builds, starts, creates two sample customers, runs 15 end-to-end checks
-python3 lab/check.py golden_config     # run one check again (names are the functions in lab/check.py)
+docker run -d -p 8080:8080 adityanugraha/ioh-msp-stack:console-preview    # then open http://localhost:8080
 ```
 
-Behind a TLS-inspecting proxy: `export HTTPS_PROXY=... LAB_CA_FILE=/path/to/proxy-ca.crt` first.
-The lab platform network uses 172.30.0.0/24; set `MSP_SUBNET` to change it.
+## Try it in a lab
 
-## Images on Docker Hub
-
-The two images the kit builds itself, and the console preview, are published to
-`adityanugraha/ioh-msp-stack` by the workflow in `.github/workflows/images.yml`:
-
-| Tag | What it is |
-|---|---|
-| `glue-1.3.0`, `glue-1.3` | msp-glue and the MSP Console, with the console's pages built in (kit 1.6.0) |
-| `nautobot-3.2.6-gc3.0.8` | Nautobot with the Golden Config and Nornir apps |
-| `console-preview` | the new console with made-up sample data; connects to nothing |
-
-Every push builds and scans them with Trivy; they are pushed from `main`, or when the workflow is
-started by hand (Actions, Images, Run workflow), once the repository has the secrets
-`DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token with read and write access).
-
-To use the published images instead of building on the server, pull and name them the way the
-compose files expect, then start as usual:
+You need a Linux machine or VM with Docker (Compose 2.20 or later), 4 vCPU, 8 GB RAM, 40 GB disk, and Internet
+access for the first build.
 
 ```bash
-docker pull adityanugraha/ioh-msp-stack:glue-1.3.0
-docker tag adityanugraha/ioh-msp-stack:glue-1.3.0 msp/glue:1.3
-docker pull adityanugraha/ioh-msp-stack:nautobot-3.2.6-gc3.0.8
-docker tag adityanugraha/ioh-msp-stack:nautobot-3.2.6-gc3.0.8 msp/nautobot:3.2.6-gc3.0.8
+git clone https://github.com/adamnugraha/ioh-msp-stack && cd ioh-msp-stack
+./lab/run-lab.sh                       # builds, starts, adds two sample customers, runs 15 end-to-end checks
+python3 lab/check.py golden_config     # run one check again (the names are the functions in lab/check.py)
 ```
 
-The preview runs anywhere with Docker: `docker run -d -p 8080:8080 adityanugraha/ioh-msp-stack:console-preview`,
-then open port 8080. To show your logo in it, add `-v /opt/ioh-msp-stack/branding:/usr/share/nginx/html/brand:ro`
-(see `branding/README.md`).
+The lab uses simulated Cisco routers and a Linux server with a Zabbix agent, so every path runs for real: a device
+in Nautobot becomes a Zabbix host and a GLPI asset, an outage opens a ticket, a drifted router gets a drift ticket.
+Behind a TLS-inspecting proxy, export `HTTPS_PROXY` and `LAB_CA_FILE=/path/to/proxy-ca.crt` first.
 
 ## Install on a server
 
-`scripts/install.sh` installs the platform on one Ubuntu 24.04 server in stages, checks each one,
-and when something is wrong stops with the reason, the fix and the command that continues after
-the fix. The interactive installation guide "IOH MSP Platform Install" walks through every command,
-from an empty server to the first customer, with your own values filled in.
+<p align="center">
+  <img src="docs/assets/install-path.png" width="900" alt="From an empty server to the first customer. 1: try it in a lab with run-lab.sh. 2: prepare the server once with sudo prepare-server.sh. 3: install the core with install.sh, 20 to 45 minutes, every stage checked. 4: open it to staff with the proxy, sso and console stages. 5: turn on the extras when you want them: chat, grafana, ai. 6: add the first customer with add-customer-secrets.sh, then a tenant in Nautobot.">
+</p>
 
-This section describes a server in IOH's private cloud. For a trial on Google Cloud, AWS or a VPS
-from any provider, follow [environments/](environments/README.md) instead: a script there creates the
-server in the cloud, and the steps use the same installer with a few other values (no web proxy, the
-cloud's firewall, and a Cloudflare Tunnel or direct access as the way in). There, one settings file and one command can
-also do everything at once (`scripts/autoinstall.sh`, "Automatic install"), which makes a rebuild two
-commands.
-
-Each version of the kit is published as a zip in the `dist` folder of this repository, with its
-SHA-256 checksum in `dist/SHA256SUMS`. On the server (`wget -O` works the same as `curl -o`):
+The platform runs on one Ubuntu 24.04 server: in IOH's private cloud, on Google Cloud, on AWS or on a VPS. Get the
+kit on the server, either as the checked zip of a release or with `git clone`:
 
 ```bash
 curl -fL -o /tmp/ioh-msp-stack.zip https://raw.githubusercontent.com/adamnugraha/ioh-msp-stack/main/dist/ioh-msp-stack-v1.6.0.zip
 sha256sum /tmp/ioh-msp-stack.zip      # must equal the line for this file in dist/SHA256SUMS
-command -v unzip >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y unzip)
 sudo mkdir -p /opt/ioh-msp-stack && sudo chown "$(id -un):" /opt/ioh-msp-stack
 rm -rf /tmp/kit && mkdir /tmp/kit && unzip -q /tmp/ioh-msp-stack.zip -d /tmp/kit
 cp -a /tmp/kit/*/. /opt/ioh-msp-stack/ && chmod +x /opt/ioh-msp-stack/scripts/*.sh
 ```
 
-`git clone https://github.com/adamnugraha/ioh-msp-stack /opt/ioh-msp-stack` gets the same files
-with git instead.
-
-Use one account for every step, from unpacking onwards: a personal account with sudo rights
-(recommended) or root. The installer runs as the owner of the kit folder, without sudo, and stops
-with the fix when it is started another way. Only `prepare-server.sh` and `backup.sh` need sudo.
-
-Prepare the server once: Ubuntu updates, Docker with Compose, Docker's address pool and log
-rotation, and the firewall (add `--proxy` and `--proxy-ca` behind IOH's web proxy). Then log out
-and in again, so your account's docker group membership applies (with tmux, run
-`tmux kill-server` first, because tmux keeps the groups it started with):
+Then, from `/opt/ioh-msp-stack`, with one account for every step (only the first command needs sudo):
 
 ```bash
-cd /opt/ioh-msp-stack
 sudo ./scripts/prepare-server.sh --admin-networks "10.10.0.0/16 10.20.0.0/16" --pool 172.31.0.0/16 --tz Asia/Jakarta
-```
+# log out and in again, so your account's docker group applies
 
-Then, from `/opt/ioh-msp-stack` and without sudo:
-
-```bash
 ./scripts/install.sh preflight                     # check the server; changes nothing
 ./scripts/install.sh settings --domain msp.ioh.internal --subnet 172.30.0.0/24 \
     --admin-networks "10.10.0.0/16 10.20.0.0/16" --tz Asia/Jakarta --email noc@example.co.id
-./scripts/install.sh                               # every remaining stage, in order (20 to 45 minutes)
+./scripts/install.sh                               # every remaining core stage, in order
+./scripts/install.sh proxy                         # HTTPS on https://<tool>.<domain>
+./scripts/install.sh sso --admin-email you@ioh.co.id --name "Your Name"
+./scripts/install.sh console                       # the MSP Console
 ./scripts/install.sh status                        # which stages are done
-./scripts/install.sh proxy                         # HTTPS on https://<tool>.<domain> (needs the DNS names)
-./scripts/install.sh certs ~/fullchain.pem ~/privkey.pem   # IOH certificates instead of Caddy's own
-./scripts/install.sh sso --admin-email you@ioh.co.id --name "Your Name"   # Keycloak and the first administrator
-./scripts/install.sh console                       # the MSP Console on https://console.<domain>
-./scripts/install.sh sso-tools                     # staff sign in to Nautobot, Zabbix, Semaphore, Forgejo, Grafana with Keycloak
-./scripts/install.sh gate                          # direct access: the sign-in gate in front of the engineers' tools
-./scripts/install.sh chat telegram                 # chat alerts (or: chat teams, chat email, chat test, chat off)
-./scripts/install.sh grafana                       # phase 3: customer dashboards
-./scripts/install.sh samples                       # optional: two made-up customers to practise on
 ```
 
-Two settings decide where the published ports listen: `--web-listen` for Caddy's 80 and 443 and
-`--collectors-listen` for Zabbix's 10051 (collectors at customer sites). Both default to `0.0.0.0`,
-every network, as IOH's network needs. `127.0.0.1` keeps a port on the server itself: for the web
-ports when a Cloudflare Tunnel on the server is the way in, and for 10051 when no collector connects
-from outside. Docker's published ports bypass the server's firewall (ufw), so these settings are what
-closes them. On a running platform, `docker compose up -d proxy zabbix-server` applies a change.
-`--way-in ioh`, `cloudflare` or `direct` sets both, `ADMIN_NETWORKS` and the certificates the way each
-way in needs them; [environments/direct-access.md](environments/direct-access.md) explains the third,
-for a server that browsers reach straight from the Internet (Let's Encrypt and the sign-in gate).
+When a stage fails, the installer stops with the reason, the fix and the command that continues after the fix.
+Every password the platform uses is generated into `.env`; customer secrets live in `secrets/`, never in Git.
 
-`sso` starts Keycloak, creates the realm `msp` with the three roles and the console's client, and
-with `--admin-email` the first administrator; it prints a one-time password that Keycloak replaces
-at the first sign-in. `console` starts the MSP Console and proves that its sign-in goes to Keycloak.
-Each needs its DNS name (or Cloudflare route): `sso.<domain>` and `console.<domain>`, like the tools.
+| Read next | For |
+|---|---|
+| [docs/install.md](docs/install.md) | Every stage and setting: certificates, staff sign-in to the tools, the sign-in gate, chat alerts, Grafana, the language model, sample customers, images from Docker Hub |
+| [environments/](environments/README.md) | Google Cloud, AWS, a VPS and IOH's private cloud; a Cloudflare Tunnel or direct access; the automatic install with one settings file |
+| [docs/upgrading.md](docs/upgrading.md) | Moving from one kit version to the next |
 
-`sso-tools` (after `sso`) gives Nautobot, Zabbix, Semaphore, Forgejo and Grafana (when it is on) a
-Keycloak sign-in: a client per tool in Keycloak, then each tool's side. Name tools to do only those,
-for example `./scripts/install.sh sso-tools nautobot zabbix`. What the roles become:
-
-| Tool | manager | engineer | automation (with engineer) |
-|---|---|---|---|
-| Nautobot | group MSP managers: views everything | group MSP engineers: also changes the inventory and runs jobs | as engineer |
-| Zabbix (SAML) | User role, group MSP managers (read-only) | Admin role, group MSP NOC engineers | as engineer |
-| Semaphore | guest in every customer project | guest | task runner in every customer project |
-| Forgejo | team managers (reads) | team engineers (reads) | team automation (writes playbooks and templates) |
-| Grafana | Viewer in every organisation | Editor in every organisation | Editor |
-
-Accounts appear at the first sign-in; someone without any of the three roles is refused (Grafana,
-Zabbix) or sees nothing (the others). Semaphore has no role mapping of its own, so msp-glue adds staff
-to every customer project within ten minutes of their first sign-in, and follows role changes the same
-way. GLPI keeps its own log-in (its staff profiles and the customer portal). The tools' local accounts
-(admin, the service accounts msp-glue uses) keep working, and are the way in when Keycloak is down.
-If Keycloak's realm keys are ever rotated, run `./scripts/install.sh sso-tools nautobot zabbix` again.
-
-Investigate in the console stays off until the console has a model to ask. Set the endpoint of an
-OpenAI-compatible server (Ollama, vLLM, an IOH-approved hosted model) in `.env`, then run
-`./scripts/install.sh console`:
+### Your first customer
 
 ```bash
-CONSOLE_AI_URL=http://ollama:11434/v1     # here an Ollama container on the msp network; the evidence goes there only
-CONSOLE_AI_MODEL=qwen3:14b
-CONSOLE_AI_KEY=                            # when the endpoint needs a key
+./scripts/add-customer-secrets.sh acme     # device log-in and SNMP secrets, typed hidden, stored in secrets/tenants/acme/
 ```
 
-To show the operator's logo in the console's side bar, put `logo.svg` or `logo.png` in `branding/`
-(see `branding/README.md`); the console serves it, and the file stays out of Git.
-`chat` asks for the bot token and chat ID (Telegram), the workflow address (Teams) or the mail
-server (e-mail), with hidden typing for secrets, checks them, sets up Zabbix and sends a test
-message. Which severities go to chat, and the one-minute wait before the first message (a problem
-that clears by itself within it never reaches the chat), are in the `chat` section of
-`glue/mappings.yaml`.
+Then in Nautobot, create a tenant in the group "Managed Services Customers" with the custom field `msp_code` set to
+`acme`, and add its devices. msp-glue picks the tenant up from Nautobot's webhook at once, or at the next
+repair run at the latest; `docker compose exec msp-glue mspctl tenant list` shows its state.
 
-Core stages: preflight, settings, network, images, start, glpi-api, forgejo-admin, tokens, platform,
-glue, harden (new random passwords for Zabbix `Admin` and GLPI `glpi`, GLPI demo accounts switched
-off), check. Every password the platform uses is in `.env`. Behind a web proxy, export `HTTPS_PROXY`
-(and `CA_FILE` for a TLS-inspecting proxy) before running the installer.
+## Use it every day
 
-`certs` checks the certificate and key before it changes anything (key without pass phrase, key
-belongs to the certificate, every name covered, not expired), then proves every name serves the new
-certificate and puts the previous certificates back if not. The choice is kept in `.env`
-(`CADDY_TLS`), so kit updates never undo it. `./scripts/install.sh certs internal` goes back to
-Caddy's own certificate authority.
+| To | Run |
+|---|---|
+| Check that msp-glue reaches every tool | `docker compose exec msp-glue mspctl check` |
+| See every customer and its provisioning state | `docker compose exec msp-glue mspctl tenant list` |
+| Provision or repair one customer now | `docker compose exec msp-glue mspctl tenant sync acme` |
+| See what a device sync would change, without changing it | `docker compose exec msp-glue mspctl --dry-run device sync acme` |
+| Register a collector at a customer site | `docker compose exec msp-glue mspctl proxy add acme proxy-acme-01` |
+| Give a customer user its GLPI portal and Grafana | `docker compose exec msp-glue mspctl user add acme budi@acme.example --name "Budi Santoso" --grafana` |
+| Add a staff member | `docker compose exec msp-glue mspctl staff add eko@ioh.co.id --name "Eko Prasetyo" --role engineer` |
+| Send a test message to the NOC chat | `docker compose exec msp-glue mspctl chat test` |
+| Back up everything (nightly, from cron, as root) | `sudo ./scripts/backup.sh` |
 
-To update the kit later: back up, download the new version's zip from `dist`, unzip it over the
-folder the same way (your `.env`, secrets and certificates are not in the zip, so they stay), then run
-`./scripts/install.sh images`, `docker compose up -d` and `./scripts/install.sh check`.
+Staff roles in Keycloak decide what each person may do:
 
-From 1.0.x to 1.1.0, after unpacking: `./scripts/install.sh images` (builds msp-glue 1.1), then
-`./scripts/install.sh sso --admin-email <you> --name "<your name>"`, `./scripts/install.sh console`
-and, if you want chat alerts, `./scripts/install.sh chat telegram` (or teams, email). The missing
-secrets are added to `.env` on the way; nothing else changes.
+| Role | In the console |
+|---|---|
+| `manager` | Reads everything; drafts and approves monthly reports |
+| `engineer` | Also acknowledges problems, opens tickets and changes, plans maintenance, adds devices, re-syncs customers |
+| `automation` | Also starts playbooks, always for an open ticket or an approved change of the same customer |
 
-From 1.1.0 to 1.2.0, after backing up and unpacking:
+A disabled account or a removed role takes effect in the console within five minutes. Every command, with its
+details, is in [docs/operations.md](docs/operations.md).
+
+## Extend it
+
+Most behaviour is set in one file, [`glue/mappings.yaml`](glue/mappings.yaml), and in two Git repositories in
+Forgejo that every customer shares. Code changes are needed only for a new kind of action or a new tool.
+
+| You want to | Change | Guide |
+|---|---|---|
+| Add a playbook | the `msp/playbooks` repository, then `semaphore.templates` | [A new playbook](docs/extending.md#a-new-playbook) |
+| Run a playbook when a change is approved | `automation.change_templates` | [When a change is approved](docs/extending.md#a-playbook-that-runs-when-a-change-is-approved) |
+| Monitor a new kind of device | `zabbix.platforms` | [New device kind](docs/extending.md#monitoring-for-a-new-kind-of-device) |
+| Back up and check a new platform's configuration | `golden_config.platforms` and a Jinja template | [Golden Config](docs/extending.md#configuration-backups-and-compliance-for-a-new-platform) |
+| Change service tiers, targets, chat or ticket rules | `glpi`, `zabbix.sla`, `chat` | [Tiers and rules](docs/extending.md#service-tiers-targets-and-ticket-rules) |
+| Watch a customer site the platform cannot reach | an edge collector | [edge-collector/](edge-collector/README.md) |
+| Add a console page or action | `types.ts`, `api.py`, a page | [The console](docs/extending.md#a-new-page-or-action-in-the-msp-console) |
+| Add a whole new tool | a compose file, a Caddy block, a client | [A new tool](docs/extending.md#a-new-tool) |
+
+## Explore the code
+
+| Start here | To understand |
+|---|---|
+| [`glue/msp_glue/server.py`](glue/msp_glue/server.py) | The webhooks, the job queue and the 10-minute repair run |
+| [`glue/msp_glue/tenants.py`](glue/msp_glue/tenants.py) | How one Nautobot tenant becomes a customer in every tool |
+| [`glue/msp_glue/devices.py`](glue/msp_glue/devices.py) | How a device becomes a Zabbix host and a GLPI asset |
+| [`glue/msp_glue/changes.py`](glue/msp_glue/changes.py) | An approved GLPI change starting a playbook |
+| [`glue/msp_glue/console/actions.py`](glue/msp_glue/console/actions.py) | Every console action, its role check and its audit entry |
+| [`glue/console-ui/src/lib/api/types.ts`](glue/console-ui/src/lib/api/types.ts) | The contract between the console's pages and its service |
+| [`glue/mappings.yaml`](glue/mappings.yaml) | Every rule the platform follows, in one file |
+| [`scripts/install.sh`](scripts/install.sh) | The installer and its stages |
+
+```text
+compose.yaml          single-host deployment; includes one compose file per tool from components/
+.env.example          every setting and secret; copy it with scripts/gen-env.sh
+components/           one folder per tool, so tools can be split across VMs later
+glue/                 msp-glue and the MSP Console: Python package, Dockerfile, mappings.yaml, tests
+glue/console-ui/      the console's pages (React, TypeScript, shadcn/ui) and their preview with sample data
+edge-collector/       the Zabbix proxy for a customer site
+golden-config/        starter content of the shared Golden Config repository
+semaphore/playbooks/  starter content of the shared playbook repository
+zabbix/               webhooks to GLPI and the chat, and the path test templates
+grafana/              the customer dashboard template
+scripts/              prepare-server.sh, install.sh, autoinstall.sh, backup.sh and helpers
+environments/         Google Cloud, AWS, a VPS, IOH's private cloud, and the two ways in from outside
+lab/                  simulated devices, sample customers, run-lab.sh and the end-to-end checks
+docs/                 the guides linked from this page, and the figures
+```
+
+Run the unit tests (no tools needed) and the console preview:
 
 ```bash
-./scripts/install.sh preflight      # 1.2 also needs https://registry.npmjs.org (the console's pages are built in the image)
-./scripts/install.sh images         # builds msp-glue 1.2 with the new pages, and Nautobot with the sign-in settings
-docker compose up -d                # every tool picks up its new settings
-./scripts/install.sh glpi-api       # GLPI on the platform's time zone (it ran on UTC); tickets keep their real times
-./scripts/install.sh console        # the new console; old bookmarks and chat links keep working
-./scripts/install.sh sso-tools      # optional: staff sign in to the tools with Keycloak
-./scripts/install.sh check
+cd glue && pip install -c constraints.txt -e '.[test]' && python -m pytest -q
+cd glue/console-ui && npm ci && npm run dev:demo      # the preview at http://localhost:5173
 ```
 
-What changes for people: the console's pages look and work differently (same addresses); GLPI shows
-times in the platform's time zone instead of UTC, and the business-hours calendar of the bronze tier
-now really means 08:00 to 17:00 there; with `sso-tools`, the tools' log-in pages get a Keycloak
-button. The console's audit trail and sessions carry over.
+Every push builds both images, scans them with Trivy and pushes them from `main`
+([images.yml](.github/workflows/images.yml)); the path test templates are tested against a real Zabbix 7.0
+([zabbix-templates.yml](.github/workflows/zabbix-templates.yml)).
 
-From 1.2.0 to 1.2.1, unpack and that is all: 1.2.1 adds `./scripts/install.sh samples` (see
-"Sample customers for practice"), and its images are the same as 1.2.0's.
+## More
 
-From 1.2.x to 1.3.0, unpack and that is all as well: 1.3.0 adds the [environments/](environments/README.md)
-folder (Google Cloud, AWS, a VPS) and the two listen settings above, which default to what the
-platform did before. Its images are still 1.2.0's.
-
-From 1.3.0 to 1.4.0, unpack and that is all: 1.4.0 adds the automatic install
-(`scripts/autoinstall.sh`, `environments/bootstrap.sh` and `--autoinstall` in the create scripts) and
-changes nothing on a platform that is already installed.
-
-From 1.4.0 to 1.5.0, unpack, then `docker compose up -d proxy`: Caddy picks up its new rules, which work
-as before while `STAFF_GATE` is off (the default). 1.5.0 adds direct access, the way in without
-Cloudflare ([environments/direct-access.md](environments/direct-access.md)): `settings --way-in`, the
-`gate` stage and `dns`, `WAY_IN=direct` in the automatic install, and `--way-in direct` in the create
-scripts, which keep a fixed address. The delete scripts now keep that address for a rebuild;
-`--release-address` releases it. The images are still 1.2.0's.
-
-From 1.5.0 to 1.6.0, after backing up and unpacking:
-
-```bash
-./scripts/install.sh images      # msp-glue 1.3: path tests, capacity forecast, monthly reports
-./scripts/install.sh platform    # new Nautobot fields (msp_path_targets, msp_report_language), the path test templates in Zabbix
-./scripts/install.sh glue        # msp-glue with the templates and the console's data folder mounted
-./scripts/install.sh console     # the console's new pages (skip it if you do not run the console yet)
-./scripts/install.sh ai          # optional: a language model on this server for the report text (about 6 GB of memory)
-```
-
-What changes: every customer with a site collector gets path test hosts in Zabbix within ten minutes
-(four default targets per collector: two internet reference points, Microsoft 365 and Google; add IOH's
-edge router at each site in the tenant field `msp_path_targets`, see `edge-collector/README.md`). They
-never open tickets and never count as downtime. The first night after the upgrade, msp-glue forecasts
-every link that ends a circuit in Nautobot and opens a GLPI ticket ("Managed infrastructure > Capacity
-warning") for each one already above 80 % at its busy hour or on course to get there within 45 days;
-`capacity.tickets: false` in `glue/mappings.yaml` stops the tickets. The first monthly drafts appear on
-the first night of next month, or at once with "Draft now" on the Monthly reports page. `mspctl proxy
-add` now prints the right owner for the collector's key file; an existing collector whose log says it
-cannot read `zabbix_proxy.psk` needs `sudo chown 1997:1995 zabbix_proxy.psk && sudo chmod 600
-zabbix_proxy.psk` and a restart.
-
-The guide's build tab lists the same work as manual steps, for anyone who wants to see or repeat a
-single step by hand.
-
-## Sample customers for practice
-
-`./scripts/install.sh samples` puts the lab's two made-up customers on a platform server, so the
-console has something to show before real customers arrive: PT ACME Retail Indonesia (`acme`) with a
-router, a server and a planned switch, and PT Bank Contoh Tbk (`bankx`) with a router behind its own
-edge collector. Their devices are small containers on the platform network, at addresses .201 to .204
-of `MSP_SUBNET`: two simulated Cisco routers that answer SSH (one of them a little off the
-configuration standard, so it gets a drift ticket) and a Linux server with Zabbix agent 2. The first run
-builds two images, which needs pypi.org and dl-cdn.alpinelinux.org, and takes a few minutes.
-
-```bash
-./scripts/install.sh samples        # the two customers, their devices and the bank's edge collector
-./scripts/install.sh samples off    # their devices Offline: no monitoring, alerts or tickets; history kept
-```
-
-A practice outage takes the sample server down and brings it back. Within about five minutes the
-console shows the problem, GLPI has its ticket and, with chat alerts on, the NOC chat has the message:
-
-```bash
-docker stop msp-lab-devices-lab-acme-srv01-agent-1 msp-lab-devices-lab-acme-srv01-1
-docker start msp-lab-devices-lab-acme-srv01-1 msp-lab-devices-lab-acme-srv01-agent-1
-```
-
-The simulated routers answer ping and SSH only, so Zabbix shows "No SNMP data collection" on both;
-that warning is expected. The samples bring their own configuration standard (the config context
-`sample-customers-standards`, for the two sample customers only), so the platform's `msp-standards`
-stays as you set it. They count as customers everywhere, the monthly service report included. To
-remove them for good, delete their devices, circuits, IP addresses, sites and the two tenants in
-Nautobot, then run `docker compose -p msp-lab-devices -f lab/compose.devices.yaml down` and
-`docker compose -p msp-lab-edge-bankx -f lab/.edge-bankx/compose.yaml down`. The tools keep their
-records of the two customers (disabled Zabbix hosts, the GLPI entities, the Semaphore projects and
-Grafana organisations), which an administrator can delete in each tool.
-
-## Everyday commands
-
-```bash
-docker compose exec msp-glue mspctl check                 # can msp-glue reach every tool?
-docker compose exec msp-glue mspctl tenant list           # customers and their provisioning status
-docker compose exec msp-glue mspctl tenant sync acme      # provision or repair one customer
-docker compose exec msp-glue mspctl -v device sync acme   # push one customer's devices again, with details
-docker compose exec msp-glue mspctl --dry-run device sync acme   # only report what would change
-docker compose exec msp-glue mspctl proxy add acme proxy-acme-01   # register a site proxy (again = new key)
-docker compose exec msp-glue mspctl paths list acme       # a customer's path test targets, collectors and Zabbix hosts
-docker compose exec msp-glue mspctl paths sync acme       # create or repair them now (the reconcile does it every 10 minutes)
-docker compose exec msp-glue mspctl capacity acme --no-tickets   # link capacity forecast now, without opening tickets
-docker compose exec msp-glue mspctl bootstrap platform    # re-apply the shared baseline (keeps webhook settings)
-docker compose exec msp-glue mspctl user add acme budi@acme.example --name "Budi Santoso" --grafana
-docker compose exec msp-glue mspctl user disable acme budi@acme.example
-docker compose exec msp-glue mspctl compliance            # refresh configuration-drift tickets
-docker compose exec msp-glue mspctl staff add eko@ioh.co.id --name "Eko Prasetyo" --role engineer
-docker compose exec msp-glue mspctl staff list            # staff accounts and their groups
-docker compose exec msp-glue mspctl staff roles eko@ioh.co.id --role manager   # exactly these roles from now on
-docker compose exec msp-glue mspctl staff reset eko@ioh.co.id     # new one-time password, sessions ended
-docker compose exec msp-glue mspctl staff disable eko@ioh.co.id   # account off, sessions ended at once
-docker compose exec msp-glue mspctl chat test             # one test message to the NOC chat
-docker compose exec msp-glue mspctl sso sync              # Semaphore project memberships from the Keycloak roles, now
-docker compose logs -f msp-glue                           # what msp-glue is doing
-docker compose logs -f msp-console versus-incident        # the console and the chat alerts
-docker compose exec ollama ollama list                    # the language model on this server (with ./scripts/install.sh ai)
-./scripts/add-customer-secrets.sh acme                    # device log-in and SNMP secrets of a new customer
-./scripts/install.sh status                               # installation stages done, certificates in use
-sudo ./scripts/backup.sh                                  # nightly backup (cron, as root)
-```
-
-Staff roles: `manager` (service view, read-only operations), `engineer` (operations and the
-console's actions), `automation` (engineer plus playbooks) and `admin` (all three). A disabled
-account, or a role taken away with `staff roles`, takes effect in the console within five minutes,
-when the console next checks with Keycloak. The console starts a playbook only when its Semaphore
-template allows the device limit to be set per run (`allow_override_limit`, on in every template the
-kit creates); without it Semaphore would run the playbook on all of the customer's devices.
-
-After editing `glue/mappings.yaml` or the msp-glue code, rebuild or restart it:
-`docker compose build msp-glue && docker compose up -d msp-glue msp-console`.
-
-## Known issues found during testing (October and November 2026)
-
-* Zabbix's own templates tag themselves `target` (for example `target: icmp`), and a host tag of the same
-  name ends up on the same problem as a second value. The path test hosts name theirs `path_target`.
-* Zabbix accepts only version 4 UUIDs in a template file; `zabbix/templates/msp_path_tests.yaml` uses
-  fixed ones of that form, so an import updates the templates instead of duplicating them.
-
-* scrapli 2026.10.3 (released 3 October 2026) breaks nornir-scrapli and every Golden Config job.
-  `components/nautobot/requirements.txt` pins `scrapli<2026.10`.
-* Golden Config installs a "Default Settings" whose scope is every device. A job run for one customer
-  then also tries that customer's servers and planned devices and fails (E3018). The bootstrap removes
-  it once; customer settings cover active network devices only.
-* Golden Config's multi-device job hides errors unless "fail job on task failure" is ticked;
-  msp-glue's nightly schedules tick it and run one schedule per customer.
-* Nautobot 3.2 reports the deletion of a device that has a primary IP address as an "updated" event.
-  msp-glue treats a device that no longer exists as deleted and disables its Zabbix host.
-* Zabbix 7.0 does not resolve `{EVENT.UPDATE.NSEVERITY}` in webhook parameters; the GLPI MSP
-  webhook uses `{EVENT.NSEVERITY}` instead.
-* Semaphore ignores the host limit sent with a task unless the template allows it, and re-enables the
-  Ansible Galaxy install when a template allows the task to override it. msp-glue sets
-  `allow_override_limit` on and `allow_override_skip_galaxy_install` off on every template.
-* GLPI's API only hashes a password sent together with an identical `password2`; msp-glue always
-  sends both.
-* A GLPI API session does not see an entity created during that session, and GLPI then refuses to add
-  groups or rules to it ("You don't have permission to perform this action"). msp-glue refreshes the
-  session's active entities right after it creates a customer entity.
-* GLPI refuses webhook URLs with a port number and Nautobot refuses host names without a dot,
-  so msp-glue listens on port 80 under the alias `msp-glue.platform.internal`.
-* Grafana 13.2 cannot delete an organisation through its API, and without automatic organisation
-  assignment it creates a personal organisation for every new user. The kit assigns new users to
-  "Main Org." and msp-glue moves customer users into their own organisation.
-* Docker's default address pools (172.17.0.0/16 and up, 192.168.0.0/16) can overlap networks you
-  manage and hide them behind a local route. Create the `msp` network with an explicit subnet and set
-  `default-address-pools` in `/etc/docker/daemon.json` to a range no customer uses.
-* Docker hands out container addresses again after its own restart, so a lab device without a fixed
-  address can end up with another container's old address while Nautobot still points at it. The lab
-  devices now have fixed addresses (.201 to .204 of the platform network).
-* Zabbix shows the name of the user who acknowledged a problem only to recipients who share a user
-  group with that user; otherwise the follow-up says "Inaccessible user". The console acknowledges as
-  svc-msp-glue, which `./scripts/install.sh console` adds to the NOC group, and names the engineer in
-  the message.
-* Keycloak behind a reverse proxy: `KC_HOSTNAME=https://sso.<domain>` with
-  `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true` gives browsers the public address and lets the console talk
-  to `http://keycloak:8080` directly; the issuer stays the public one, so tokens check out either way.
-* Versus Incident's message templates know a limited set of functions (`int` is missing, for example);
-  the kit's templates use only what the tested 1.4.13 offers. Teams turns each line with a link into
-  one clickable block, so the Teams template puts one link per line.
-* The Nautobot base image (`networktocode/nautobot:3.2.6-py3.12`) lags Debian's security updates. The
-  kit's Nautobot image applies them while it builds (best effort: the preflight warns when
-  deb.debian.org cannot be reached). Trivy still reports four HIGH findings in msgpack, urllib3 and
-  setuptools: these are copies that pip bundles inside itself, used only while pip runs, and they clear
-  when pip updates its bundled copies.
-* Versus Incident 1.4 releases add AI and enterprise features quickly. The kit uses only its alert
-  path, with the agent, queues and on-call switched off; test a newer `VERSUS_IMAGE` in a lab first.
-* **Zabbix keeps counting a problem that was open when its host was disabled** (Zabbix bug
-  [ZBX-27917](https://support.zabbix.com/browse/ZBX-27917), confirmed for 7.0, not fixed yet). msp-glue
-  disables, never deletes, the host of a device that is removed from Nautobot or no longer active, so a
-  device that was down when it was retired keeps its customer's service "down" and lowers the monthly
-  availability until the host is deleted. The console no longer shows those problems (as Zabbix's own
-  Problems page), but the availability figure is Zabbix's. Until msp-glue handles it: after retiring a
-  device that was down, delete its host in Zabbix (Data collection, Hosts) once its history is not
-  needed; in the lab the customer's service recovered within a minute.
-* The official GLPI image runs PHP in UTC, so GLPI showed and stored ticket times in UTC and read the
-  "Business hours WIB" calendar as UTC hours. From 1.2.0 the installer switches on GLPI's time zone
-  support and sets the platform's zone (`glpi-api`); GLPI keeps date-times as time stamps, so the times
-  GLPI recorded itself (opened, solved, due) keep their real moments. Times someone typed into GLPI by
-  hand while it showed UTC were read as UTC hours and now show 7 hours later (WIB); due times already
-  set on open bronze tickets stay as they were computed. The console reads GLPI's own clock either way.
-* Keycloak's default `role_list` scope sends one SAML `Role` attribute per role, and Zabbix refuses an
-  assertion that repeats an attribute ("Found an Attribute element with duplicated Name"). The kit's
-  Zabbix client sends every role in one attribute instead.
-* Semaphore stops at start-up when `SEMAPHORE_OIDC_PROVIDERS` is set but empty; the kit's default is
-  `{}` (no provider). Its manual endpoint settings are named `issuer`, `auth`, `token`, `userinfo`,
-  `jwks` and `algorithms`.
+- [Known issues found during testing](docs/known-issues.md): 23 behaviours of the tools that the kit works around,
+  or that you need to know about when you run it.
+- [Upgrading](docs/upgrading.md) from any earlier kit version.
+- The full guide, "IOH open-source managed services platform", and the interactive install guide "IOH MSP Platform
+  Install" come with the kit.

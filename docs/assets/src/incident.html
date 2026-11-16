@@ -1,0 +1,43 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="style.css">
+<style>
+body { width: 1200px; height: 492px; }
+.head { position: absolute; left: 60px; top: 30px; }
+.head h2 { font-size: 30px; margin-top: 6px; }
+.step { position: absolute; width: 320px; height: 132px; padding: 15px 18px 14px 66px; }
+.step h3 { font-size: 18px; margin: 3px 0 5px; }
+.step p { font-size: 13.8px; }
+.num { position: absolute; left: 16px; top: 16px; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
+  font-family: var(--title); font-weight: 700; font-size: 18px; color: #fff; background: var(--c); }
+svg { position: absolute; inset: 0; }
+.ln { fill: none; stroke-width: 1.8; }
+.lr { stroke: var(--red-soft); } .tr { fill: var(--red-soft); }
+.le { stroke: var(--emerald); } .te { fill: var(--emerald); }
+.lab { font-family: var(--mono); font-size: 11.5px; }
+</style></head>
+<body>
+<div class="glow" style="width:420px;height:420px;right:-80px;top:-120px;background:var(--red);opacity:.22"></div>
+<div class="dots"></div>
+<div class="head"><div class="kicker">A problem, from alert to fix</div><h2>Each tool does its own job, and every step is written to the customer's ticket</h2></div>
+
+<svg viewBox="0 0 1200 492">
+  <defs>
+    <marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="tr"/></marker>
+    <marker id="me" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="te"/></marker>
+  </defs>
+  <path class="ln lr" d="M380 186 H438" marker-end="url(#mr)"/>
+  <path class="ln lr" d="M760 186 H818" marker-end="url(#mr)"/>
+  <path class="ln lr" d="M980 252 V318" marker-end="url(#mr)"/>
+  <path class="ln lr" d="M820 384 H762" marker-end="url(#mr)"/>
+  <path class="ln lr" d="M440 384 H382" marker-end="url(#mr)"/>
+  <path class="ln le" d="M60 384 H40 V186 H58" marker-end="url(#me)" stroke-dasharray="5 4"/>
+  <text class="lab te" x="14" y="300" transform="rotate(-90 14 300)">recovery closes the loop</text>
+</svg>
+
+<div class="card step edge e" style="left:60px;top:120px"><div class="num">1</div><span class="tag">Zabbix</span><h3>A problem on a device</h3><p>High or worse on a managed device, tagged with the customer, the site and the device</p></div>
+<div class="card step edge a" style="left:440px;top:120px"><div class="num">2</div><span class="tag">GLPI</span><h3>An incident opens</h3><p>In the customer's own entity, with the due times of the customer's service tier</p></div>
+<div class="card step edge a" style="left:820px;top:120px"><div class="num">3</div><span class="tag">Versus Incident</span><h3>The NOC chat hears it</h3><p>After one quiet minute, with the ticket, the Zabbix event and the console page linked</p></div>
+<div class="card step edge r" style="left:820px;top:318px"><div class="num">4</div><span class="tag">MSP Console</span><h3>An engineer takes it</h3><p>Acknowledges with a note that reaches the ticket; Investigate drafts the likely cause</p></div>
+<div class="card step edge m" style="left:440px;top:318px"><div class="num">5</div><span class="tag">GLPI</span><h3>A change is approved</h3><p>Its category names the playbook and its description the devices; changing templates need this approval</p></div>
+<div class="card step edge m" style="left:60px;top:318px"><div class="num">6</div><span class="tag">Semaphore</span><h3>The playbook runs</h3><p>On those devices only; the start and the result, with the log's last lines, go to the change</p></div>
+</body></html>
