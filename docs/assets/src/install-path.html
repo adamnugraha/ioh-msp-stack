@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="style.css">
+<style>
+body { width: 1200px; height: 470px; }
+.head { position: absolute; left: 60px; top: 30px; }
+.head h2 { font-size: 30px; margin-top: 6px; }
+.step { position: absolute; width: 330px; height: 140px; padding: 15px 18px 14px 66px; }
+.step h3 { font-size: 18px; margin: 3px 0 6px; }
+.step p { font-size: 13.5px; }
+.cmd { display: block; margin-top: 8px; font-family: var(--mono); font-size: 11.8px; color: var(--text);
+  background: rgba(0,0,0,.28); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; white-space: nowrap; overflow: hidden; }
+.num { position: absolute; left: 16px; top: 16px; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
+  font-family: var(--title); font-weight: 700; font-size: 18px; color: #fff; background: var(--c); }
+svg { position: absolute; inset: 0; }
+.ln { fill: none; stroke: var(--red-soft); stroke-width: 1.8; } .tr { fill: var(--red-soft); }
+</style></head>
+<body>
+<div class="glow" style="width:420px;height:420px;left:-100px;bottom:-200px;background:var(--red);opacity:.22"></div>
+<div class="dots"></div>
+<div class="head"><div class="kicker">Getting it running</div><h2>From an empty server to the first customer, one checked stage at a time</h2></div>
+<svg viewBox="0 0 1200 470">
+  <defs><marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="tr"/></marker></defs>
+  <path class="ln" d="M390 190 H433" marker-end="url(#m)"/>
+  <path class="ln" d="M765 190 H808" marker-end="url(#m)"/>
+  <path class="ln" d="M975 260 V302" marker-end="url(#m)"/>
+  <path class="ln" d="M810 372 H767" marker-end="url(#m)"/>
+  <path class="ln" d="M435 372 H392" marker-end="url(#m)"/>
+</svg>
+<div class="card step edge e" style="left:60px;top:120px"><div class="num">1</div><span class="tag">Optional, any Linux box</span><h3>Try it in a lab</h3><p>Two sample customers and 15 end-to-end checks</p><span class="cmd">./lab/run-lab.sh</span></div>
+<div class="card step edge a" style="left:435px;top:120px"><div class="num">2</div><span class="tag">Once, with sudo</span><h3>Prepare the server</h3><p>Ubuntu updates, Docker, address pool, firewall</p><span class="cmd">sudo ./scripts/prepare-server.sh</span></div>
+<div class="card step edge r" style="left:810px;top:120px"><div class="num">3</div><span class="tag">20 to 45 minutes</span><h3>Install the core</h3><p>Every stage checked; a failure says why and how to go on</p><span class="cmd">./scripts/install.sh</span></div>
+<div class="card step edge v" style="left:810px;top:302px"><div class="num">4</div><span class="tag">Needs the DNS names</span><h3>Open it to staff</h3><p>HTTPS, certificates, Keycloak and the console</p><span class="cmd">install.sh proxy · sso · console</span></div>
+<div class="card step edge m" style="left:435px;top:302px"><div class="num">5</div><span class="tag">When you want them</span><h3>Turn on the extras</h3><p>Chat alerts, staff sign-in to the tools, dashboards, a model</p><span class="cmd">install.sh chat · grafana · ai</span></div>
+<div class="card step edge e" style="left:60px;top:302px"><div class="num">6</div><span class="tag">Then every customer</span><h3>Add the first customer</h3><p>Secrets on the server, then a tenant in Nautobot</p><span class="cmd">add-customer-secrets.sh acme</span></div>
+</body></html>

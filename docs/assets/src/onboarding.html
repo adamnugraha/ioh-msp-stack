@@ -1,0 +1,74 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="style.css">
+<style>
+body { width: 1200px; height: 690px; }
+.head { position: absolute; left: 60px; top: 30px; }
+.head h2 { font-size: 30px; margin-top: 6px; }
+.src { position: absolute; left: 60px; top: 150px; width: 320px; padding: 18px 20px; }
+.src h3 { font-size: 21px; margin: 6px 0 12px; }
+.kv { display: grid; grid-template-columns: 118px 1fr; row-gap: 7px; font-size: 14px; }
+.kv span { font-family: var(--mono); font-size: 12.5px; color: var(--faint); padding-top: 1px; }
+.kv b { font-weight: 400; color: var(--text); }
+.sec { margin-top: 16px; padding-top: 12px; border-top: 1px dashed var(--line); font-size: 13.5px; color: var(--muted); line-height: 1.4; }
+.sec code { font-family: var(--mono); font-size: 12px; color: var(--text); }
+.out { position: absolute; left: 470px; width: 670px; height: 66px; padding: 10px 16px; display: grid; grid-template-columns: 118px 1fr; align-items: center; column-gap: 14px; }
+.out h3 { font-size: 18px; margin: 2px 0 0; }
+.out p { font-size: 13.8px; }
+.dev { position: absolute; left: 60px; top: 594px; width: 1080px; padding: 13px 18px; }
+.dev h3 { font-size: 17px; margin-bottom: 8px; }
+.row { display: flex; gap: 9px; flex-wrap: wrap; }
+svg { position: absolute; inset: 0; }
+.ln { fill: none; stroke: var(--red-soft); stroke-width: 1.8; }
+.tr { fill: var(--red-soft); }
+.lab { font-family: var(--mono); font-size: 11.5px; fill: var(--red-soft); }
+.pill { position: absolute; left: 392px; top: 352px; width: 66px; text-align: center; font-family: var(--mono); font-size: 11.5px; color: var(--red-soft); line-height: 1.35; }
+</style></head>
+<body>
+<div class="glow" style="width:420px;height:420px;left:-100px;top:160px;background:var(--red);opacity:.25"></div>
+<div class="dots"></div>
+<div class="head"><div class="kicker">One customer, every tool</div><h2>A tenant in Nautobot becomes a customer in every tool, without a ticket to anyone</h2></div>
+
+<svg viewBox="0 0 1200 690">
+  <defs><marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="tr"/></marker></defs>
+  <path class="ln" d="M380 340 H425"/>
+  <path class="ln" d="M425 148 V542"/>
+  <path class="ln" d="M425 148 H468" marker-end="url(#m)"/>
+  <path class="ln" d="M425 226 H468" marker-end="url(#m)"/>
+  <path class="ln" d="M425 304 H468" marker-end="url(#m)"/>
+  <path class="ln" d="M425 382 H468" marker-end="url(#m)"/>
+  <path class="ln" d="M425 460 H468" marker-end="url(#m)"/>
+  <path class="ln" d="M425 538 H468" marker-end="url(#m)"/>
+</svg>
+<div class="pill" style="left:384px;top:282px;width:38px;text-align:left">msp-<br>glue</div>
+
+<div class="card src edge r">
+  <span class="tag">Nautobot tenant</span>
+  <h3>PT ACME Retail Indonesia</h3>
+  <div class="kv">
+    <span>msp_code</span><b>acme</b>
+    <span>service tier</span><b>silver</b>
+    <span>regulated</span><b>no</b>
+    <span>SNMP version</span><b>2</b>
+    <span>proxy group</span><b>central proxies</b>
+  </div>
+  <div class="sec">Device log-in and SNMP secrets in <code>secrets/tenants/acme/</code>, typed once with <code>add-customer-secrets.sh</code>, never in Git.</div>
+  <div class="sec">msp-glue starts on Nautobot's webhook within seconds, and repairs anything missing every 10 minutes.</div>
+</div>
+
+<div class="card out edge a" style="top:115px"><div><span class="tag">Service desk</span><h3>GLPI</h3></div><p>Entity named after the customer, a requesters group, and the rule that applies the silver tier's time to own and time to resolve</p></div>
+<div class="card out edge e" style="top:193px"><div><span class="tag">Monitoring</span><h3>Zabbix</h3></div><p>Host group, a settings template holding the SNMP secrets, user groups and rights, and a monthly availability service level against the tier's target</p></div>
+<div class="card out edge m" style="top:271px"><div><span class="tag">Backups</span><h3>Forgejo</h3></div><p>Repository <code style="font-family:var(--mono);font-size:12.5px">backups-acme</code> for the customer's configuration backups</p></div>
+<div class="card out edge r" style="top:349px"><div><span class="tag">Configuration</span><h3>Golden Config</h3></div><p>Device log-in secrets group, the scope of the customer's active network devices, and a nightly backup and compliance run</p></div>
+<div class="card out edge m" style="top:427px"><div><span class="tag">Automation</span><h3>Semaphore</h3></div><p>Project <code style="font-family:var(--mono);font-size:12.5px">acme</code> with its keys, the playbooks repository, an inventory from Nautobot and the standard templates</p></div>
+<div class="card out edge e" style="top:505px"><div><span class="tag">Phase 3</span><h3>Grafana</h3></div><p>An organisation, a Zabbix data source that can read only this customer's hosts, and the overview dashboard</p></div>
+
+<div class="card dev">
+  <h3>Then every device of the customer, about 20 seconds after it is saved in Nautobot</h3>
+  <div class="row">
+    <span class="chip"><i style="background:var(--emerald)"></i>Zabbix host, templates, tags</span>
+    <span class="chip"><i style="background:var(--azure)"></i>GLPI asset in its entity</span>
+    <span class="chip"><i style="background:var(--amber)"></i>Ansible inventory line</span>
+    <span class="chip"><i style="background:var(--red-soft)"></i>nightly backup, drift tickets</span>
+  </div>
+</div>
+</body></html>

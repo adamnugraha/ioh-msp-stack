@@ -1,0 +1,86 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="style.css">
+<style>
+body { width: 1200px; height: 740px; }
+.box { position: absolute; padding: 10px 14px; }
+.box h3 { font-size: 17px; }
+.box p { font-size: 13.5px; }
+.who { text-align: center; }
+.tool { padding: 11px 13px; }
+.tool h3 { font-size: 17px; margin: 3px 0 3px; }
+.tool p { font-size: 12.8px; }
+.head { position: absolute; left: 60px; top: 30px; }
+.head h2 { font-size: 30px; margin-top: 6px; }
+svg { position: absolute; inset: 0; }
+.ln { fill: none; stroke-width: 1.8; }
+.lr { stroke: var(--red-soft); } .la { stroke: var(--azure); } .le { stroke: var(--emerald); } .lv { stroke: var(--violet); } .lf { stroke: var(--faint); }
+.tr { fill: var(--red-soft); } .ta { fill: var(--azure); } .te { fill: var(--emerald); } .tf { fill: var(--faint); }
+.lab { font-family: var(--mono); font-size: 11.5px; }
+.legend { position: absolute; right: 60px; top: 46px; display: flex; gap: 8px; }
+</style></head>
+<body>
+<div class="glow" style="width:420px;height:420px;left:380px;top:250px;background:var(--red);opacity:.22"></div>
+<div class="dots"></div>
+<div class="head"><div class="kicker">How it fits together</div><h2>Nautobot holds the record; msp-glue keeps every other tool in step</h2></div>
+
+<svg viewBox="0 0 1200 740">
+  <defs>
+    <marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="tr"/></marker>
+    <marker id="ma" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="ta"/></marker>
+    <marker id="me" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="te"/></marker>
+  </defs>
+  <!-- browsers to the proxy -->
+  <path class="ln la" d="M225 182 V220" marker-end="url(#ma)"/>
+  <path class="ln la" d="M600 182 V198 H480 V220" marker-end="url(#ma)"/>
+  <text class="lab ta" x="234" y="206">HTTPS</text>
+  <text class="lab ta" x="489" y="214">HTTPS</text>
+  <!-- proxy to the console -->
+  <path class="ln la" d="M225 302 V338" marker-end="url(#ma)"/>
+  <!-- customer site to the collector -->
+  <path class="ln le" d="M975 182 V220" marker-end="url(#me)"/>
+  <!-- console to msp-glue -->
+  <path class="ln lr" d="M390 376 H433" marker-end="url(#mr)"/>
+  <text class="lab tr" x="396" y="368">jobs</text>
+  <!-- msp-glue to every tool -->
+  <path class="ln lr" d="M600 412 V436"/>
+  <path class="ln lr" d="M144 436 H1054"/>
+  <path class="ln lr" d="M144 436 V460" marker-end="url(#mr)"/>
+  <path class="ln lr" d="M326 436 V460" marker-end="url(#mr)"/>
+  <path class="ln lr" d="M508 436 V460" marker-end="url(#mr)"/>
+  <path class="ln lr" d="M690 436 V460" marker-end="url(#mr)"/>
+  <path class="ln lr" d="M872 436 V460" marker-end="url(#mr)"/>
+  <path class="ln lr" d="M1054 436 V460" marker-end="url(#mr)"/>
+  <text class="lab tr" x="612" y="429">creates, repairs, links</text>
+  <!-- collector to Zabbix -->
+  <path class="ln le" d="M1100 412 V460" marker-end="url(#me)"/>
+  <text class="lab te" x="1108" y="446">10051 out</text>
+  <!-- tools to chat and data -->
+</svg>
+
+<div class="box card who edge a" style="left:60px;top:118px;width:330px;height:64px"><h3>NOC engineers and managers</h3><p>a browser on the IOH network or VPN</p></div>
+<div class="box card who edge a" style="left:435px;top:118px;width:330px;height:64px"><h3>Customers</h3><p>the GLPI portal and Grafana dashboards</p></div>
+<div class="box card who edge e" style="left:810px;top:118px;width:330px;height:64px"><h3>Customer sites</h3><p>routers, switches, firewalls, servers</p></div>
+
+<div class="box card edge a" style="left:60px;top:222px;width:470px;height:80px"><span class="tag">Caddy</span><h3>One address per tool, with HTTPS</h3><p>Engineers' tools answer only from staff networks</p></div>
+<div class="box card edge v" style="left:555px;top:222px;width:210px;height:80px"><span class="tag">Keycloak</span><h3>One staff sign-in</h3><p>manager, engineer, automation</p></div>
+<div class="box card edge e" style="left:810px;top:222px;width:330px;height:190px"><span class="tag">Edge collector</span><h3>Zabbix proxy at the site</h3><p>Polls the customer's devices where the platform cannot reach them. Opens one outbound connection, encrypted with its own key, and keeps 72 hours of data when the link drops. Also runs the path tests.</p></div>
+
+<div class="box card edge a" style="left:60px;top:340px;width:330px;height:72px"><span class="tag">MSP Console</span><h3>Every tool on one set of pages</h3><p>Roles checked and audited before any action</p></div>
+<div class="box card edge r" style="left:435px;top:340px;width:330px;height:72px;box-shadow:0 0 40px rgba(228,0,43,.25)"><span class="tag">msp-glue</span><h3>The integration service (this kit)</h3><p>Webhooks, a repair run every 10 minutes</p></div>
+
+<div class="box card tool edge r" style="left:60px;top:462px;width:168px;height:92px"><span class="tag">Record</span><h3>Nautobot</h3><p>customers, devices, sites, circuits, Golden Config</p></div>
+<div class="box card tool edge a" style="left:242px;top:462px;width:168px;height:92px"><span class="tag">Service desk</span><h3>GLPI</h3><p>tickets, changes, service levels, assets</p></div>
+<div class="box card tool edge m" style="left:424px;top:462px;width:168px;height:92px"><span class="tag">Automation</span><h3>Semaphore</h3><p>Ansible playbooks per customer project</p></div>
+<div class="box card tool edge m" style="left:606px;top:462px;width:168px;height:92px"><span class="tag">Git</span><h3>Forgejo</h3><p>config backups, templates, playbooks</p></div>
+<div class="box card tool edge e" style="left:788px;top:462px;width:168px;height:92px"><span class="tag">Dashboards</span><h3>Grafana</h3><p>one organisation per customer</p></div>
+<div class="box card tool edge e" style="left:970px;top:462px;width:168px;height:92px"><span class="tag">Monitoring</span><h3>Zabbix</h3><p>problems, availability per customer</p></div>
+
+<div class="box card edge a" style="left:60px;top:584px;width:520px;height:58px"><h3>Chat alerts: Versus Incident</h3><p>High problems to the NOC's Telegram, Teams or e-mail, with the ticket linked</p></div>
+<div class="box card edge v" style="left:620px;top:584px;width:520px;height:58px"><h3>Language model (optional): Ollama on the server</h3><p>Drafts Investigate notes and monthly report text; an engineer checks them</p></div>
+
+<div class="box card" style="left:60px;top:664px;width:1080px;height:52px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+  <span class="tag" style="color:var(--faint)">Underneath</span>
+  <span class="chip">PostgreSQL</span><span class="chip">MariaDB for GLPI</span><span class="chip">Valkey</span>
+  <span class="chip">secrets/ folder, never in Git</span><span class="chip">nightly backup.sh</span>
+</div>
+</body></html>
