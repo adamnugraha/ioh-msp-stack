@@ -7,6 +7,7 @@ basic authentication with an admin account rather than an organisation-scoped to
 from __future__ import annotations
 
 import logging
+from urllib.parse import quote
 
 from ..http import DEFAULT_TIMEOUT, APIError, make_session
 
@@ -34,10 +35,20 @@ class Grafana:
             raise APIError(f"Grafana {method} {path} failed: HTTP {response.status_code} {response.text[:300]}")
         return response.json() if response.content else None
 
-    def ensure_org(self, name: str) -> int:
-        found = self.request("GET", f"orgs/name/{name}", ok404=True)
+    def ensure_org(self, name: str, dashboard_uid: str = "") -> int:
+        found = self.request("GET", f"orgs/name/{quote(name, safe='')}", ok404=True)
         if found:
             return int(found["id"])
+        # A renamed customer: the organisation that holds its dashboard gets the new name, so its users,
+        # data source and dashboards stay where they are.
+        for org in (self.request("GET", "orgs") or []) if dashboard_uid else []:
+            try:
+                if self.request("GET", f"dashboards/uid/{dashboard_uid}", org_id=int(org["id"]), ok404=True):
+                    log.info("Grafana: renaming organisation %s to %s", org["name"], name)
+                    self.request("PUT", f"orgs/{org['id']}", {"name": name})
+                    return int(org["id"])
+            except APIError:   # an organisation the admin account is not a member of
+                continue
         log.info("Grafana: creating organisation %s", name)
         return int(self.request("POST", "orgs", {"name": name})["orgId"])
 
