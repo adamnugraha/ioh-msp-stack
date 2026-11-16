@@ -34,7 +34,7 @@ CHANGE_FINISHED = {5, 6, 8, 13, 14}
 PLAYBOOK_WAIT_SECONDS = 4 * 3600
 _VAR_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 # Set by the console from the form, never typed in: "device" is the playbooks' target (hosts: "{{ device }}").
-RESERVED_VARIABLES = {"glpi_ticket_id", "glpi_change_id", "msp_console_user", "device"}
+RESERVED_VARIABLES = changes.NOT_SETTABLE | {"device"}
 
 
 class ActionError(Exception):
@@ -280,7 +280,7 @@ def parse_variables(text: str) -> dict[str, str]:
         key = key.strip()
         if not sep or not _VAR_NAME.match(key):
             raise ActionError(f"Variables, line {number}: write one 'name: value' per line.")
-        if key in RESERVED_VARIABLES or key.lower().startswith("ansible_"):
+        if key in RESERVED_VARIABLES or not changes.settable(key):
             raise ActionError(f"The variable {key} cannot be set here.")
         out[key] = value.strip()[:500]
     if len(out) > 20:

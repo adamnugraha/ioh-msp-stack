@@ -31,6 +31,13 @@ log = logging.getLogger("msp_glue.changes")
 MARKER = "[msp-glue automation]"
 _VAR_LINE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+?)\s*$")
 _ANSI = re.compile(r"\x1b?\[[0-9;]*m")  # colour codes in Ansible output
+# Set by msp-glue or the console, never by a person (the console also reserves "device").
+NOT_SETTABLE = {"glpi_ticket_id", "glpi_change_id", "msp_console_user"}
+
+
+def settable(name: str) -> bool:
+    """Ansible's own variables (ansible_host, ansible_user, ...) could point a run at another host or account."""
+    return name not in NOT_SETTABLE and not name.lower().startswith("ansible_")
 
 
 def handle_change(change_id: int) -> str:
@@ -56,9 +63,7 @@ def handle_change(change_id: int) -> str:
             return "error: no tenant"
 
         variables = parse_variables(change.get("content") or "")
-        # Ansible's own variables (ansible_host, ansible_user, ...) could point the run at another
-        # host or account, so they are never taken from a change description.
-        refused = sorted(k for k in variables if k.lower().startswith("ansible_") or k == "glpi_change_id")
+        refused = sorted(k for k in variables if not settable(k))
         for key in refused:
             variables.pop(key)
         sem = clients.semaphore()
