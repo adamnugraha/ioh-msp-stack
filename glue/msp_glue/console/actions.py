@@ -288,15 +288,18 @@ def parse_variables(text: str) -> dict[str, str]:
     return out
 
 
+def _ancestors(g, entity_id: int):
+    """entity_id, then each GLPI entity above it (at most 12), read from GLPI only as far as the caller needs."""
+    for _ in range(12):
+        if entity_id <= 0:
+            return
+        yield entity_id
+        entity_id = int(g.get("Entity", entity_id).get("entities_id") or 0)
+
+
 def _in_entity(g, entity_id: int, customer_entity: int) -> bool:
     """True when entity_id is the customer's entity or one below it."""
-    for _ in range(12):
-        if entity_id == customer_entity:
-            return True
-        if entity_id <= 0:
-            return False
-        entity_id = int(g.get("Entity", entity_id).get("entities_id") or 0)
-    return False
+    return customer_entity in _ancestors(g, entity_id)
 
 
 def check_itil(item_type: str, item_id: int, tenant, template_name: str) -> dict:
@@ -600,7 +603,8 @@ def post_note(user: User, item_type: str, item_id: int, text: str, address: str 
             raise ActionError(f"GLPI has no {item_type.lower()} #{item_id}.") from exc
         if int(item.get("is_deleted") or 0):
             raise ActionError(f"{item_type} #{item_id} is in the GLPI trash.")
-        tenant = next((t for e, t in entities.items() if _in_entity(g, int(item.get("entities_id") or 0), e)), None)
+        # One walk up from the ticket's entity, not one per customer: the nearest customer entity wins.
+        tenant = next((entities[e] for e in _ancestors(g, int(item.get("entities_id") or 0)) if e in entities), None)
         if not tenant:
             raise ActionError(f"{item_type} #{item_id} does not belong to a managed customer.")
         entry = store.record(user.as_dict(), "investigation note", customer=tenant.code,
