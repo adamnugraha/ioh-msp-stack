@@ -22,3 +22,4 @@ branding/*
 !branding/README.md
 # The console's built pages: made from glue/console-ui by "npm run build" or the image build
 glue/msp_glue/console/ui/
+*.egg-info/

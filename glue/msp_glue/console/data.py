@@ -551,10 +551,6 @@ def ticket_stats(start: datetime, end: datetime | None = None) -> dict[str, dict
     return cache.get(f"tickets_from:{start:%Y-%m}", load, {})
 
 
-def month_tickets() -> dict[str, dict]:
-    return ticket_stats(month_start())
-
-
 _CHANGE_FIELDS = {2: "id", 1: "name", 12: "status", 80: "entity", 7: "category", 15: "opened", 11: "impact",
                   4: "requester", 22: "writer", 173: "task_begin", 174: "task_end", 21: "content", 13: "items",
                   131: "item_types"}

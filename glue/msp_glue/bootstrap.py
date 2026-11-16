@@ -14,8 +14,6 @@ import logging
 import secrets as pysecrets
 from pathlib import Path
 
-import yaml
-
 from . import clients
 from .clients.forgejo import Forgejo
 from .clients.glpi import GLPI
